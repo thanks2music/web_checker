@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WEB CHECKER - 更新履歴</title>
-    <script src="https://code.jquery.com/jquery-3.4.1.min.js" integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo=" crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" integrity="sha384-xOolHFLEh07PJGoPkLv1IbcEPTNtaed2xpHsD9ESMhqIYd0nLMwNLD69Npy4HI+N" crossorigin="anonymous">
   </head>
 
   <body>
@@ -19,8 +19,19 @@
         </div>
       </nav>
 
+      <div id="not-approved" class="alert alert-warning" style="display: none;">
+        アカウントが承認されていません。管理者にお問い合わせください。
+      </div>
+
+      <div id="invalid-param" class="alert alert-danger" style="display: none;">
+        無効なパラメータです。<a href="index.html">一覧に戻る</a>
+      </div>
+
       <h1>更新履歴</h1>
       <div id="records"></div>
+      <div class="mt-3">
+        <a href="index.html" class="btn btn-secondary">一覧に戻る</a>
+      </div>
     </div>
 
     <div id="loading" class="text-center" style="display: none; position: absolute; left: 50%; top: 30%;">
@@ -29,25 +40,87 @@
       </div>
     </div>
 
-    <script src="/__/firebase/6.4.0/firebase-app.js"></script>
-    <script src="/__/firebase/6.4.0/firebase-auth.js"></script>
-    <script src="/__/firebase/6.4.0/firebase-firestore.js"></script>
-    <script src="/__/firebase/init.js"></script>
+    <script src="/__/firebase/10.12.0/firebase-app-compat.js"></script>
+    <script src="/__/firebase/10.12.0/firebase-auth-compat.js"></script>
+    <script src="/__/firebase/10.12.0/firebase-firestore-compat.js"></script>
+    <script src="/__/firebase/init.js?useEmulator=false"></script>
     <script src="./javascripts/routing.js"></script>
     <script>
-     $('#loading').fadeIn(0);
+     // XSS 対策: HTML エスケープ関数
+     function escapeHtml(text) {
+       if (text === null || text === undefined) return '';
+       const div = document.createElement('div');
+       div.textContent = text;
+       return div.innerHTML;
+     }
+
      const db = firebase.firestore();
-     const scheduleId = location.search.match(/scheduleId=(.*)&*/)[1];
-     db.collection('schedules').doc(scheduleId).collection('archives').orderBy('time', 'desc').get().then(doc => { doc.forEach(archive => {
-       $('#loading').fadeOut();
-       $('#records').append($(`<dev class="card">
-<div class="card-body">
-  <h3 class="card-title">${new Date(archive.data().time)}</h3>
-  <p class="card-text">${archive.data().content}</p>
-  <a href="index.html" class="btn btn-link" role="button"><a href="index.html">戻る</a>
-</div>`));
+
+     // 認証状態の確認と approved チェック
+     firebase.auth().onAuthStateChanged(async (user) => {
+       if (!user) {
+         location.href = './login.html';
+         return;
+       }
+
+       // カスタムクレームをチェック
+       const idTokenResult = await user.getIdTokenResult();
+       if (!idTokenResult.claims.approved) {
+         $('#not-approved').show();
+         $('#loading').hide();
+         return;
+       }
+
+       loadArchives();
      });
-     });
+
+     function loadArchives() {
+       $('#loading').fadeIn(0);
+
+       // URLSearchParams で安全にパラメータを取得
+       const params = new URLSearchParams(location.search);
+       const scheduleId = params.get('scheduleId');
+
+       // 入力検証: scheduleId が存在し、妥当な形式かチェック
+       if (!scheduleId || !/^[a-zA-Z0-9]+$/.test(scheduleId)) {
+         $('#loading').hide();
+         $('#invalid-param').show();
+         return;
+       }
+
+       db.collection('schedules').doc(scheduleId).collection('archives').orderBy('time', 'desc').get()
+         .then(doc => {
+           if (doc.empty) {
+             $('#records').append('<p class="text-muted">履歴がありません。</p>');
+           }
+
+           doc.forEach(archive => {
+             const data = archive.data();
+             const timeStr = data.time ? new Date(data.time).toLocaleString() : '-';
+
+             // XSS 対策: content をエスケープして表示
+             // HTML タグをプレーンテキストとして表示
+             const safeContent = escapeHtml(data.content || '');
+
+             // typo 修正: <dev> → <div>
+             const cardHtml = `
+<div class="card mb-3">
+  <div class="card-body">
+    <h5 class="card-title">${escapeHtml(timeStr)}</h5>
+    <pre class="card-text" style="white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto;">${safeContent}</pre>
+  </div>
+</div>`;
+             $('#records').append(cardHtml);
+           });
+
+           $('#loading').fadeOut();
+         })
+         .catch(err => {
+           console.error(err);
+           alert('データの取得に失敗しました: ' + err.message);
+           $('#loading').fadeOut();
+         });
+     }
     </script>
   </body>
 </html>
