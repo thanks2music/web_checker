@@ -1,44 +1,61 @@
-process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
-
+const axios = require('axios');
 const cheerio = require('cheerio');
 const jschardet = require('jschardet');
+const iconv = require('iconv-lite');
 
-const rp = require('promise-request-retry');
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000;
 
 const crawler = async (uri, selector, fetchAsHtml) => {
   console.log('crawl: ', uri);
-  // todo: validation
-  if (typeof uri === 'undefined' || uri === null) { throw new Error('invalid URI'); }
-  if (typeof selector === 'undefined' || selector === null) { selector = 'body'; }
 
-  options = {
-    retry: 3,
-    uri: uri,
-    encoding: 'binary',
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36' },
-    followAllRedirects: true,
-    transform: (body) => {
-      const encoding = jschardet.detect(body).encoding
-      const iconv = require('iconv-lite')
-      const buf = new Buffer.from(body, 'binary')
-      const convertedString = iconv.decode(buf, encoding)
-
-      return cheerio.load(convertedString, { decodeEntities: false });
-    }
-  };
-
-  try {
-    const $ = await rp(options);
-    if (fetchAsHtml) {
-      return $(selector).html();
-    } else {
-      var result = [];
-      $(selector).map((i, dom) => { result.push($(dom).text()); });
-      return result.join("\n");
-    }
-  } catch (err) {
-    throw err;
+  if (typeof uri === 'undefined' || uri === null) {
+    throw new Error('invalid URI');
   }
+  if (typeof selector === 'undefined' || selector === null) {
+    selector = 'body';
+  }
+
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await axios.get(uri, {
+        responseType: 'arraybuffer',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        maxRedirects: 10,
+        timeout: 30000,
+      });
+
+      // 文字コード検出と変換
+      const detected = jschardet.detect(response.data);
+      const encoding = detected.encoding || 'utf-8';
+      const html = iconv.decode(response.data, encoding);
+
+      const $ = cheerio.load(html, { decodeEntities: false });
+
+      if (fetchAsHtml) {
+        return $(selector).html();
+      } else {
+        const result = [];
+        $(selector).each((i, dom) => {
+          result.push($(dom).text());
+        });
+        return result.join("\n");
+      }
+    } catch (err) {
+      lastError = err;
+      console.error(`crawl attempt ${attempt}/${MAX_RETRIES} failed:`, err.message);
+
+      if (attempt < MAX_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+      }
+    }
+  }
+
+  throw lastError;
 };
 
 module.exports = crawler;
