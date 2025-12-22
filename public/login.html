@@ -15,6 +15,9 @@
       <hr>
       <h2>ログイン</h2>
       <div id="firebaseui-auth-container"></div>
+      <div id="error-display" class="alert alert-danger mt-3" style="display: none;">
+        <strong>認証エラー:</strong> <span id="error-message"></span>
+      </div>
     </div>
 
     <script src="/__/firebase/10.12.0/firebase-app-compat.js"></script>
@@ -31,6 +34,7 @@
 
      const uiConfig = {
        signInSuccessUrl: '/index.html',
+       signInFlow: 'popup',  // redirect の代わりに popup を使用（サードパーティCookie制限対策）
        signInOptions: [
          {
            provider: firebase.auth.GoogleAuthProvider.PROVIDER_ID,
@@ -40,7 +44,21 @@
          }
        ],
        tosUrl: null,
-       privacyPolicyUrl: null
+       privacyPolicyUrl: null,
+       callbacks: {
+         signInSuccessWithAuthResult: function(authResult, redirectUrl) {
+           // ログイン成功時の処理
+           console.log('Sign-in success:', authResult.user.email);
+           return true;  // true を返すと signInSuccessUrl にリダイレクト
+         },
+         signInFailure: function(error) {
+           // エラー時は画面とコンソールに出力
+           console.error('Sign-in error:', error.code, error.message);
+           document.getElementById('error-display').style.display = 'block';
+           document.getElementById('error-message').textContent = error.code + ': ' + error.message;
+           return Promise.resolve();
+         }
+       }
      };
      const ui = new firebaseui.auth.AuthUI(firebase.auth());
      ui.start('#firebaseui-auth-container', uiConfig);
