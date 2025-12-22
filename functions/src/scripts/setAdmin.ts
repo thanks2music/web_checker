@@ -1,16 +1,17 @@
-const admin = require('firebase-admin');
+import admin from 'firebase-admin';
+
 admin.initializeApp();
 
 // 承認するユーザーの UID（コマンドライン引数で指定）
 const uid = process.argv[2];
 
 if (!uid) {
-  console.error('使い方: node set-admin.js <UID>');
-  console.error('例: node set-admin.js abc123def456');
+  console.error('使い方: node dist/scripts/setAdmin.js <UID>');
+  console.error('例: node dist/scripts/setAdmin.js abc123def456');
   process.exit(1);
 }
 
-async function approveUser(uid) {
+async function approveUser(uid: string): Promise<void> {
   try {
     // 1. ユーザーを有効化
     await admin.auth().updateUser(uid, { disabled: false });
