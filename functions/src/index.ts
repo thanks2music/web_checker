@@ -15,18 +15,18 @@ import authUserLib from './userAuth';
 import slackNotifierLib from './slackNotifier';
 import { Schedule, SlackPayload } from './types';
 
+// 環境変数（Firebase Functions v2 では params を使用）
+const slackUrl = defineString('SLACK_URL');
+const hostingUrl = defineString('HOSTING_URL', { default: '' });
+
 // Firebase 初期化
 initializeApp();
 const firestore = getFirestore();
 const auth = getAuth();
 const pubsub = new PubSub();
 
-// リージョン設定（Firestore と同じリージョンを使用）
-const REGION = 'asia-northeast1';
-
-// 環境変数（Firebase Functions v2 では params を使用）
-const slackUrl = defineString('SLACK_URL');
-const hostingUrl = defineString('HOSTING_URL', { default: '' });
+// リージョン設定（無料枠を使用するため us-central1）
+const REGION = 'us-central1';
 
 /**
  * Hosting URL を取得するヘルパー
