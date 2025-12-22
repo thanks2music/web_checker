@@ -205,6 +205,18 @@ Hosting URL: https://your-project-id.web.app
 
 ## 開発
 
+### TypeScript ビルド
+
+本プロジェクトは TypeScript で実装されています。
+
+```shell
+cd functions
+npm run build        # 一度ビルド
+npm run build:watch  # 監視モードで自動ビルド
+```
+
+**注意**: `firebase deploy` 実行時は自動的にビルドが実行されるため、手動でのビルドは開発時のみ必要です。
+
 ### ローカルでのテスト実行
 
 ```shell
