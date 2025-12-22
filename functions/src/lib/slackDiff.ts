@@ -1,6 +1,15 @@
-const jsdiff = require('diff');
+import * as jsdiff from 'diff';
 
-const slackDiff = (newStr, oldStr, mode) => {
+export type DiffMode = 'chars' | 'words' | 'lines';
+
+/**
+ * Slack 用のテキスト差分を生成する
+ * @param newStr 新しい文字列
+ * @param oldStr 古い文字列（省略可、undefinedまたはnullの場合は空文字として扱う）
+ * @param mode 差分モード（'chars', 'words', 'lines'）デフォルトは 'lines'
+ * @returns Slack 用にフォーマットされた差分文字列
+ */
+const slackDiff = (newStr: string | null, oldStr?: string | null, mode?: DiffMode): string => {
   if (typeof newStr === 'undefined') {
     throw new Error('invalid newStr');
   }
@@ -8,7 +17,7 @@ const slackDiff = (newStr, oldStr, mode) => {
   const normalizedNewStr = newStr === null ? '' : newStr;
   const normalizedOldStr = (typeof oldStr === 'undefined' || oldStr === null) ? '' : oldStr;
 
-  let diffs;
+  let diffs: jsdiff.Change[];
   switch (mode) {
     case 'chars':
       diffs = jsdiff.diffChars(normalizedOldStr, normalizedNewStr);
@@ -36,4 +45,4 @@ const slackDiff = (newStr, oldStr, mode) => {
   return diffStr;
 };
 
-module.exports = slackDiff;
+export default slackDiff;
