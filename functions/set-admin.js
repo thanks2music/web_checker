@@ -1,8 +1,14 @@
 const admin = require('firebase-admin');
 admin.initializeApp();
 
-// 承認するユーザーの UID
-const uid = process.argv[2] || 'flVEZtsko5QbuwDXkQiX0vhQpe42';
+// 承認するユーザーの UID（コマンドライン引数で指定）
+const uid = process.argv[2];
+
+if (!uid) {
+  console.error('使い方: node set-admin.js <UID>');
+  console.error('例: node set-admin.js abc123def456');
+  process.exit(1);
+}
 
 async function approveUser(uid) {
   try {

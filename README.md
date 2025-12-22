@@ -155,62 +155,32 @@ Project Console: https://console.firebase.google.com/project/your-project-id/ove
 Hosting URL: https://your-project-id.web.app
 ```
 
-### 11. 管理者ユーザーの設定
+### 11. ユーザーの有効化
 
-本アプリでは、セキュリティのため `approved: true` のカスタムクレームを持つユーザーのみがアクセスできます。最初の管理者ユーザーには手動でカスタムクレームを設定する必要があります。
+本アプリでは、セキュリティのため新規ユーザーは自動的に無効化されます。管理者が Firebase コンソールから手動で有効化する必要があります。
 
 #### 11.1 アプリにログイン
 
 1. デプロイ完了後、Hosting URL（`https://<project-id>.web.app`）にアクセス
 2. Google アカウントでログイン
-3. 「アカウントが承認されていません」と表示されることを確認
+3. 新規ユーザーの場合、ログインできない状態になります
 
-#### 11.2 ユーザー UID の確認
+#### 11.2 Slack 通知の確認
+
+新規ユーザーがログインすると、設定した Slack チャンネルに通知が届きます。
+
+#### 11.3 ユーザーの有効化
 
 1. Firebase コンソール → 「Authentication」→「Users」タブ
-2. ログインしたユーザーの「ユーザー UID」をコピー
-
-#### 11.3 カスタムクレームの設定
-
-`functions/` ディレクトリに `set-admin.js` を作成:
-
-```javascript
-const admin = require('firebase-admin');
-admin.initializeApp();
-
-const uid = 'ここにユーザーのUIDを貼り付け';
-
-admin.auth().setCustomUserClaims(uid, { approved: true })
-  .then(() => {
-    console.log('カスタムクレームを設定しました');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('エラー:', error);
-    process.exit(1);
-  });
-```
-
-スクリプトを実行:
-
-```shell
-cd functions
-
-# Google Cloud の認証（初回のみ）
-gcloud auth application-default login
-
-# スクリプトを実行
-node set-admin.js
-
-# 実行後、スクリプトを削除
-rm set-admin.js
-```
+2. 有効化したいユーザーの行をクリック
+3. 「アカウントを無効にする」のチェックを外す
+4. 「保存」をクリック
 
 #### 11.4 再ログイン
 
-カスタムクレーム設定後:
+ユーザー有効化後:
 
-1. アプリからログアウト
+1. アプリからログアウト（または画面をリロード）
 2. 再度ログイン
 3. スケジュール一覧画面が表示されれば成功
 
