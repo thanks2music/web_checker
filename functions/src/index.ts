@@ -1,14 +1,19 @@
-const { initializeApp } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
-const { getAuth } = require('firebase-admin/auth');
-const functionsV1 = require('firebase-functions/v1');
-const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onMessagePublished } = require('firebase-functions/v2/pubsub');
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
-const { defineString } = require('firebase-functions/params');
-const { PubSub } = require('@google-cloud/pubsub');
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import * as functionsV1 from 'firebase-functions/v1';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { onMessagePublished } from 'firebase-functions/v2/pubsub';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { defineString } from 'firebase-functions/params';
+import { PubSub } from '@google-cloud/pubsub';
+import { IncomingWebhook } from '@slack/webhook';
 
-const { IncomingWebhook } = require('@slack/webhook');
+import webCrawlerLib from './webCrawler';
+import webFetcherLib from './webFetcher';
+import authUserLib from './userAuth';
+import slackNotifierLib from './slackNotifier';
+import { Schedule, SlackPayload } from './types';
 
 // Firebase 初期化
 initializeApp();
@@ -23,32 +28,31 @@ const REGION = 'asia-northeast1';
 const slackUrl = defineString('SLACK_URL');
 const hostingUrl = defineString('HOSTING_URL', { default: '' });
 
-const webCrawlerLib = require('./webCrawler');
-const webFetcherLib = require('./webFetcher');
-const authUserLib = require('./userAuth');
-const slackNotifierLib = require('./slackNotifier');
-
-// Hosting URL を取得するヘルパー
-const getHostingUrl = () => {
+/**
+ * Hosting URL を取得するヘルパー
+ */
+const getHostingUrl = (): string => {
   if (hostingUrl.value()) {
     return hostingUrl.value();
   }
-  const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_CONFIG && JSON.parse(process.env.FIREBASE_CONFIG).projectId;
+  const firebaseConfig = process.env.FIREBASE_CONFIG;
+  const projectId = process.env.GCLOUD_PROJECT ||
+    (firebaseConfig && JSON.parse(firebaseConfig).projectId);
   return `https://${projectId}.web.app`;
 };
 
 // 5分毎にスケジュール実行
-exports.webFetcher = onSchedule({
+export const webFetcher = onSchedule({
   schedule: '5 * * * *',
   timeoutSeconds: 300,
   memory: '128MiB',
   region: REGION,
-}, async (event) => {
+}, async () => {
   await webFetcherLib(firestore, pubsub);
 });
 
 // webChecker トピックを購読
-exports.webCrawler = onMessagePublished({
+export const webCrawler = onMessagePublished<{ scheduleId: string }>({
   topic: 'webChecker',
   timeoutSeconds: 300,
   memory: '256MiB',
@@ -59,14 +63,14 @@ exports.webCrawler = onMessagePublished({
 });
 
 // schedules ドキュメントの書き込み時にトリガー
-exports.webCrawlerOnWrite = onDocumentWritten({
+export const webCrawlerOnWrite = onDocumentWritten({
   document: 'schedules/{scheduleID}',
   timeoutSeconds: 300,
   memory: '256MiB',
   region: REGION,
 }, async (event) => {
-  const afterData = event.data?.after?.data();
-  const beforeData = event.data?.before?.data();
+  const afterData = event.data?.after?.data() as Schedule | undefined;
+  const beforeData = event.data?.before?.data() as Schedule | undefined;
 
   if (afterData) {
     if (!beforeData ||
@@ -79,7 +83,7 @@ exports.webCrawlerOnWrite = onDocumentWritten({
 });
 
 // slackNotifier トピックを購読
-exports.slackNotifier = onMessagePublished({
+export const slackNotifier = onMessagePublished<SlackPayload>({
   topic: 'slackNotifier',
   timeoutSeconds: 300,
   memory: '128MiB',
@@ -91,7 +95,7 @@ exports.slackNotifier = onMessagePublished({
 
 // 新規ユーザー作成時にトリガー（v1 API を使用）
 // ユーザーを無効化し、管理者に Slack 通知を送信
-exports.sendWelcomeEmail = functionsV1
+export const sendWelcomeEmail = functionsV1
   .region(REGION)
   .runWith({ timeoutSeconds: 300, memory: '128MB' })
   .auth.user()
