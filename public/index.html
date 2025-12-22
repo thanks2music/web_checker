@@ -19,10 +19,6 @@
         </div>
       </nav>
 
-      <div id="not-approved" class="alert alert-warning" style="display: none;">
-        アカウントが承認されていません。管理者にお問い合わせください。
-      </div>
-
       <h1>スケジュール一覧</h1>
 
       <table class="table table-sm">
@@ -77,24 +73,14 @@
      const db = firebase.firestore();
      let currentUser = null;
 
-     // 認証状態の確認と approved チェック
-     firebase.auth().onAuthStateChanged(async (user) => {
+     // 認証状態の確認
+     firebase.auth().onAuthStateChanged((user) => {
        if (!user) {
          location.href = './login.html';
          return;
        }
 
        currentUser = user;
-
-       // カスタムクレームをチェック
-       const idTokenResult = await user.getIdTokenResult();
-       if (!idTokenResult.claims.approved) {
-         $('#not-approved').show();
-         $('#create').hide();
-         $('#loading').hide();
-         return;
-       }
-
        loadSchedules();
      });
 
