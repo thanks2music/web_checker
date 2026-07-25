@@ -20,9 +20,9 @@ export interface Schedule {
   checkedAt?: number;
   /** 作成日時（Unix timestamp） */
   createdAt?: number;
-  /** 作成者のメールアドレス */
+  /** 作成者の UID（Firestore Rules のオーナーチェックに使用） */
   createdUser?: string;
-  /** 更新者のメールアドレス */
+  /** 更新者の UID */
   updatedUser?: string;
 }
 

@@ -36,7 +36,7 @@
 
         <tbody id="create">
           <tr>
-            <td><input type="text" class="form-control schedule" placeholder="0 * * * *" value="0 * * * *"><small class="form-text text-muted"><a href="https://crontab.guru" target="_blank" rel="noopener noreferrer">crontab 形式</a>。分は無視されます。</small></td>
+            <td><input type="text" class="form-control schedule" placeholder="0 * * * *" value="0 * * * *"><small class="form-text text-muted"><a href="https://crontab.guru" target="_blank" rel="noopener noreferrer">crontab 形式</a>。既定は 1 時間に 1 回。スケジューラ自体が毎時起動のため、1 時間より短い間隔を指定しても効果はありません。</small></td>
             <td><input type="text" class="form-control title"></td>
             <td><input type="text" class="form-control uri" placeholder="https://" value="https://"></td>
             <td><input type="text" class="form-control selector" placeholder="#hoge, .bar:nth-child(3)"><small class="form-text text-muted">CSS3 Selector 形式。</small></td>
@@ -139,7 +139,7 @@
                title: $(`#${id} .title`).val(),
                selector: $(`#${id} .selector`).val(),
                slack: $(`#${id} .slack`).val(),
-               updatedUser: currentUser.email,
+               updatedUser: currentUser.uid,
              }, { merge: true }).then(() => {
                $(`#${id} .schedule`).data('value', $(`#${id} .schedule`).val());
                $(`#${id} .title`).data('value', $(`#${id} .title`).val());
@@ -216,7 +216,7 @@
            title: _title,
            selector: _selector,
            slack: _slack,
-           createdUser: currentUser.email,
+           createdUser: currentUser.uid,
            createdAt: Date.now(),
            checkedAt: Date.now()
          }).then(() => {
