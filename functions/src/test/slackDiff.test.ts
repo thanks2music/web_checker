@@ -19,6 +19,6 @@ describe('slackDiff error handling', () => {
   test('throws error without newStr', () => {
     // @ts-expect-error: Testing invalid input
     const withoutArgs = (): string => slackDiff();
-    expect(withoutArgs).toThrowError('invalid newStr');
+    expect(withoutArgs).toThrow('invalid newStr');
   });
 });

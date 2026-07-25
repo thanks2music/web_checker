@@ -67,7 +67,7 @@ const crawler = async (
     }
   }
 
-  throw lastError;
+  throw lastError ?? new Error('crawl failed with no error captured');
 };
 
 export default crawler;
