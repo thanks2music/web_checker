@@ -1,20 +1,46 @@
+import nock from 'nock';
 import crawler from '../lib/crawler';
 
-// 注意: このテストは外部サービス（Google）に依存しています
-// CI/CD では nock や msw を使用したモックの導入を推奨
+const HOST = 'https://example.test';
+
+const buildHtml = (title: string, body: string): string =>
+  `<html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`;
+
+beforeAll(() => {
+  nock.disableNetConnect();
+});
+
+afterAll(() => {
+  nock.enableNetConnect();
+  nock.cleanAll();
+  nock.restore();
+});
+
+afterEach(() => {
+  nock.cleanAll();
+});
 
 describe('crawler', () => {
-  test('fetches title from external site', async () => {
-    // Google のタイトルを取得
-    await expect(crawler('https://www.google.com/?hl=ja', 'title')).resolves.toBe('Google');
-  }, 30000);
+  test('extracts <title> element text', async () => {
+    nock(HOST).get('/').reply(200, buildHtml('Test Page', 'hello world'));
 
-  test('fetches body content', async () => {
-    // body セレクタでコンテンツを取得（内容は変わる可能性があるため、存在確認のみ）
-    const result = await crawler('https://www.google.com/?hl=ja', 'body');
+    await expect(crawler(`${HOST}/`, 'title')).resolves.toBe('Test Page');
+  });
+
+  test('extracts body content', async () => {
+    nock(HOST).get('/').reply(200, buildHtml('Test Page', 'body content here'));
+
+    const result = await crawler(`${HOST}/`, 'body');
     expect(result).toBeTruthy();
-    expect(result!.length).toBeGreaterThan(0);
-  }, 30000);
+    expect(result).toContain('body content here');
+  });
+
+  test('returns HTML when fetchAsHtml is true', async () => {
+    nock(HOST).get('/').reply(200, buildHtml('Test Page', '<p>inner</p>'));
+
+    const result = await crawler(`${HOST}/`, 'body', true);
+    expect(result).toContain('<p>inner</p>');
+  });
 });
 
 describe('crawler error handling', () => {
@@ -24,7 +50,10 @@ describe('crawler error handling', () => {
     await expect(crawler(null)).rejects.toThrow('invalid URI');
   });
 
-  test('throws error when http access fails', async () => {
-    await expect(crawler('http://non-existent-domain-12345.invalid')).rejects.toThrow();
-  }, 30000);
+  test('throws after exhausting retries on network failure', async () => {
+    // The crawler retries up to 3 times, so mock 3 failures.
+    nock(HOST).get('/').times(3).replyWithError('connection refused');
+
+    await expect(crawler(`${HOST}/`)).rejects.toThrow();
+  });
 });
