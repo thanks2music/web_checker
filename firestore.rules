@@ -1,26 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ヘルパー関数: 認証済みユーザーかどうか
+    // 認証済みか
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    // 管理者が Firebase Console から付与するカスタムクレーム `approved: true` を持つか
+    function isApproved() {
+      return isAuthenticated() && request.auth.token.approved == true;
+    }
+
+    // 対象ドキュメントの所有者か（`createdUser` にユーザー UID を格納する運用）
+    function isOwner(data) {
+      return isAuthenticated() && data.createdUser == request.auth.uid;
+    }
+
     // schedules コレクション
     match /schedules/{scheduleId} {
-      // 認証済みユーザーのみ読み書き可能
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated()
+      // 承認済みユーザーはコレクション全体を読める（Web Checker はチーム共有の監視ダッシュボード運用）
+      allow read: if isApproved();
+
+      // 作成は承認済み + 必須フィールドの型検証 + 自分自身を `createdUser` として書き込むこと
+      allow create: if isApproved()
         && request.resource.data.uri is string
         && request.resource.data.selector is string
-        && request.resource.data.title is string;
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+        && request.resource.data.title is string
+        && request.resource.data.createdUser == request.auth.uid;
 
-      // archives サブコレクション（読み取りのみ許可、書き込みは Functions から）
+      // 更新・削除は承認済み + 自分が作成したドキュメントのみ
+      allow update: if isApproved() && isOwner(resource.data);
+      allow delete: if isApproved() && isOwner(resource.data);
+
+      // archives サブコレクション: 読み取りのみクライアントに許可、書き込みは Functions (Admin SDK) のみ
       match /archives/{archiveId} {
-        allow read: if isAuthenticated();
-        // クライアントからの書き込みは禁止（Functions の Admin SDK からのみ書き込み）
+        allow read: if isApproved();
         allow write: if false;
       }
     }
