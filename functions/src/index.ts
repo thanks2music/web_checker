@@ -36,8 +36,9 @@ const getHostingUrl = (): string => {
     return hostingUrl.value();
   }
   const firebaseConfig = process.env.FIREBASE_CONFIG;
-  const projectId = process.env.GCLOUD_PROJECT ||
-    (firebaseConfig && JSON.parse(firebaseConfig).projectId);
+  const projectId =
+    process.env.GCLOUD_PROJECT ??
+    (firebaseConfig ? (JSON.parse(firebaseConfig) as { projectId?: string }).projectId : undefined);
   return `https://${projectId}.web.app`;
 };
 

@@ -17,7 +17,7 @@ export interface SlackField {
 export interface SlackAttachment {
   title?: string;
   title_link?: string;
-  color?: 'good' | 'warning' | 'danger' | string;
+  color?: 'good' | 'warning' | 'danger' | (string & {});
   fields?: SlackField[];
 }
 

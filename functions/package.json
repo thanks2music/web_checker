@@ -1,20 +1,25 @@
 {
-  "name": "functions",
-  "description": "Cloud Functions for Firebase",
+  "name": "@revolution/web-checker-functions",
+  "version": "0.0.0",
+  "description": "Cloud Functions for Firebase (Web Checker)",
   "main": "dist/index.js",
+  "private": true,
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "serve": "npm run build && firebase serve --only functions",
-    "shell": "npm run build && firebase functions:shell",
-    "start": "npm run shell",
+    "serve": "pnpm run build && firebase serve --only functions",
+    "shell": "pnpm run build && firebase functions:shell",
+    "start": "pnpm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "type-check": "tsc --noEmit",
     "test": "jest --silent",
     "devtest": "jest --silent=false --verbose"
   },
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "dependencies": {
     "@google-cloud/pubsub": "^4.9.0",
@@ -23,19 +28,22 @@
     "cheerio": "^1.0.0",
     "cron-parser": "^4.9.0",
     "diff": "^7.0.0",
-    "firebase-admin": "^13.0.1",
-    "firebase-functions": "^6.1.2",
+    "firebase-admin": "^14.2.0",
+    "firebase-functions": "^7.3.0",
     "iconv-lite": "^0.6.3",
     "jschardet": "^3.1.4"
   },
   "devDependencies": {
+    "@eslint/js": "^9.15.0",
     "@types/diff": "^7.0.0",
     "@types/jest": "^29.5.14",
-    "@types/node": "^20.17.12",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.15.0",
     "firebase-functions-test": "^3.4.0",
     "jest": "^29.7.0",
-    "ts-jest": "^29.2.5",
-    "typescript": "^5.7.2"
-  },
-  "private": true
+    "prettier": "^3.4.0",
+    "ts-jest": "^29.4.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.0"
+  }
 }
