@@ -106,9 +106,12 @@ export const slackNotifier = onMessagePublished<SlackPayload>({
  * ⚠ 有効化には Firebase Console → Authentication → Settings →
  * Blocking functions → `beforeCreate` に本関数を登録する必要がある。
  */
+// NOTE: blocking functions は認証フロー遅延を防ぐため timeoutSeconds を
+// 0〜7 秒に収める必要がある (firebase-functions v7 の制約)。PubSub publish は
+// 通常 1 秒未満で完了するため 7 秒で十分余裕がある。
 export const beforeCreate = beforeUserCreated({
   region: REGION,
-  timeoutSeconds: 60,
+  timeoutSeconds: 7,
 }, async (event) => {
   const user = event.data;
   if (user) {
