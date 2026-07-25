@@ -43,6 +43,7 @@
     "eslint": "^9.15.0",
     "firebase": "^12.16.0",
     "firebase-functions-test": "^3.4.0",
+    "firebase-tools": "^15.24.0",
     "jest": "^29.7.0",
     "nock": "^14.0.16",
     "prettier": "^3.4.0",
