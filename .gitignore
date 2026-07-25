@@ -1,6 +1,5 @@
 # firebase
 .firebase
-.firebaserc
 
 # Logs
 logs
@@ -64,7 +63,5 @@ typings/
 # next.js build output
 .next
 
-# docs
-docs/review
-docs/plan
+# Local-only docs (design reviews, debug notes, in-progress plans)
 docs/**

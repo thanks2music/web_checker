@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "revolution-web-checker",
+    "debug": "debug-web-checker"
+  }
+}
