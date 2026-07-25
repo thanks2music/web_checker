@@ -1,10 +1,9 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
-import * as functionsV1 from 'firebase-functions/v1';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { beforeUserCreated } from 'firebase-functions/v2/identity';
 import { defineSecret } from 'firebase-functions/params';
 import { PubSub } from '@google-cloud/pubsub';
 import { IncomingWebhook } from '@slack/webhook';
@@ -22,7 +21,6 @@ const slackUrl = defineSecret('SLACK_URL_REVOLUTION_WEB_CHECKER');
 // Firebase 初期化
 initializeApp();
 const firestore = getFirestore();
-const auth = getAuth();
 const pubsub = new PubSub();
 
 // リージョン設定（無料枠を使用するため us-central1）
@@ -96,14 +94,25 @@ export const slackNotifier = onMessagePublished<SlackPayload>({
   await slackNotifierLib(slack, event.data.message.json);
 });
 
-// 新規ユーザー作成時にトリガー（v1 API を使用）
-// ユーザーを無効化し、管理者に Slack 通知を送信
-// NOTE: SLACK_URL_REVOLUTION_WEB_CHECKER シークレットの読み取りは
-// slackNotifier 関数側で行うため、この関数では secrets 宣言不要
-export const sendWelcomeEmail = functionsV1
-  .region(REGION)
-  .runWith({ timeoutSeconds: 300, memory: '128MB' })
-  .auth.user()
-  .onCreate(async (user) => {
-    await authUserLib(auth, pubsub, user);
-  });
+/**
+ * 新規ユーザー作成 (blocking function)
+ *
+ * v2 blocking function `beforeUserCreated` として、Firebase Authentication
+ * (Identity Platform) からユーザー作成前に呼ばれる。以下 2 点を行う:
+ *
+ * 1. `{ disabled: true }` を返し、管理者による承認までアカウントを無効化する
+ * 2. 管理者に Slack 通知を PubSub 経由で送る
+ *
+ * ⚠ 有効化には Firebase Console → Authentication → Settings →
+ * Blocking functions → `beforeCreate` に本関数を登録する必要がある。
+ */
+export const beforeCreate = beforeUserCreated({
+  region: REGION,
+  timeoutSeconds: 60,
+}, async (event) => {
+  const user = event.data;
+  if (user) {
+    await authUserLib(pubsub, user);
+  }
+  return { disabled: true };
+});
