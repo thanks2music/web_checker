@@ -16,6 +16,7 @@
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
     "test": "jest --silent",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-web-checker-rules \"jest --config jest.rules.config.js --forceExit\"",
     "devtest": "jest --silent=false --verbose"
   },
   "engines": {
@@ -35,10 +36,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/diff": "^7.0.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.0",
     "eslint": "^9.15.0",
+    "firebase": "^12.16.0",
     "firebase-functions-test": "^3.4.0",
     "jest": "^29.7.0",
     "prettier": "^3.4.0",
