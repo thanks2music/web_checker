@@ -3,22 +3,62 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ログイン</title>
-    <link type="text/css" rel="stylesheet" href="https://cdn.firebase.com/libs/firebaseui/3.5.2/firebaseui.css" />
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+    <title>ログイン - WEB CHECKER</title>
+    <link type="text/css" rel="stylesheet" href="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" integrity="sha384-xOolHFLEh07PJGoPkLv1IbcEPTNtaed2xpHsD9ESMhqIYd0nLMwNLD69Npy4HI+N" crossorigin="anonymous">
   </head>
 
   <body>
-    <h1>ログイン</h1>
-    <div id="firebaseui-auth-container"></div>
-    <script src="/__/firebase/6.4.2/firebase-app.js"></script>
-    <script src="/__/firebase/6.4.2/firebase-auth.js"></script>
-    <script src="/__/firebase/ui/4.1.0/firebase-ui-auth__ja.js"></script>
-    <script src="/__/firebase/init.js"></script>
+    <div class="container mt-5">
+      <h1>WEB CHECKER</h1>
+      <p class="text-muted">Web ページの変更を監視して Slack に通知します</p>
+      <hr>
+      <h2>ログイン</h2>
+      <div id="firebaseui-auth-container"></div>
+      <div id="error-display" class="alert alert-danger mt-3" style="display: none;">
+        <strong>認証エラー:</strong> <span id="error-message"></span>
+      </div>
+    </div>
+
+    <script src="/__/firebase/10.12.0/firebase-app-compat.js"></script>
+    <script src="/__/firebase/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth__ja.js"></script>
+    <script src="/__/firebase/init.js?useEmulator=false"></script>
     <script>
+     // 既にログイン済みの場合はリダイレクト
+     firebase.auth().onAuthStateChanged((user) => {
+       if (user) {
+         location.href = './index.html';
+       }
+     });
+
      const uiConfig = {
        signInSuccessUrl: '/index.html',
-       signInOptions: [{ provider: firebase.auth.GoogleAuthProvider.PROVIDER_ID }],
+       signInFlow: 'popup',  // redirect の代わりに popup を使用（サードパーティCookie制限対策）
+       signInOptions: [
+         {
+           provider: firebase.auth.GoogleAuthProvider.PROVIDER_ID,
+           customParameters: {
+             prompt: 'select_account'
+           }
+         }
+       ],
+       tosUrl: null,
+       privacyPolicyUrl: null,
+       callbacks: {
+         signInSuccessWithAuthResult: function(authResult, redirectUrl) {
+           // ログイン成功時の処理
+           console.log('Sign-in success:', authResult.user.email);
+           return true;  // true を返すと signInSuccessUrl にリダイレクト
+         },
+         signInFailure: function(error) {
+           // エラー時は画面とコンソールに出力
+           console.error('Sign-in error:', error.code, error.message);
+           document.getElementById('error-display').style.display = 'block';
+           document.getElementById('error-message').textContent = error.code + ': ' + error.message;
+           return Promise.resolve();
+         }
+       }
      };
      const ui = new firebaseui.auth.AuthUI(firebase.auth());
      ui.start('#firebaseui-auth-container', uiConfig);

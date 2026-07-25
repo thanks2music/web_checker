@@ -1,137 +1,243 @@
 # web_checker
 
+Web ページの変更を監視して Slack に通知するアプリケーションです。
+
+## 必要要件
+
+- Node.js 20 以上
+- Firebase CLI
+- Google アカウント
+- Slack ワークスペース（Webhook URL 発行用）
+
 ## デプロイ方法
 
-### リポジトリのクローン
+### 1. リポジトリのクローン
 
 本リポジトリを任意のディレクトリに clone してください。
 
+```shell
+git clone <repository-url>
+cd web-checker
+```
+
 以下の作業は、リポジトリのルートディレクトリ直下で行ってください。
 
-### Firebase プロジェクトの作成
+### 2. Firebase プロジェクトの作成
 
-Firebase にアクセスして( https://console.firebase.google.com/ )、新規プロジェクトを作成してください
-* Google アナリティクスは使用しないため、`今は設定しない` を選択してください
+1. [Firebase コンソール](https://console.firebase.google.com/) にアクセス
+2. 「プロジェクトを追加」をクリック
+3. プロジェクト名を入力（例: `web-checker-prod`）
+4. Google アナリティクスは「今は設定しない」を選択
+5. 「プロジェクトを作成」をクリック
 
-左下の `Spark アップグレード` の部分から、アップグレードを選択して、料金プランを `Blaze 従量制` に変更してください。
-* もし、`請求先アカウント` が存在しない場合は、先に Google Cloud Platform から請求先情報を作成してください。
+#### 料金プランの変更
 
-### firebase CLI の準備
+Cloud Functions を使用するため、Blaze（従量制）プランが必要です。
 
-firebase CLI がインストールされていない場合は、以下にしたがってあらかじめインストールしてください
+1. Firebase コンソールの左下「Spark アップグレード」をクリック
+2. 「Blaze 従量制」を選択
+3. 請求先アカウントを設定（なければ Google Cloud Platform から作成）
 
-``` shell
-$ npm install -g firebase-tools
+### 3. Firebase CLI の準備
+
+Firebase CLI がインストールされていない場合は、以下のコマンドでインストールしてください。
+
+```shell
+npm install -g firebase-tools
 ```
 
-ref: https://firebase.google.com/docs/cli?hl=ja
+参考: https://firebase.google.com/docs/cli?hl=ja
 
-### firebase CLI の認証
+### 4. Firebase CLI の認証
 
-以下のコマンドを実行して、Google 認証を済ませてください
+以下のコマンドを実行して、Google 認証を済ませてください。
 
-``` shell
-$ firebase login
-
+```shell
+firebase login
 ```
 
-### Firebase プロジェクトと作業ディレクトリとの紐付け
+### 5. Firebase プロジェクトと作業ディレクトリとの紐付け
 
-以下のコマンドを実行して、プロジェクトに紐付けてください
+以下のコマンドを実行して、プロジェクトに紐付けてください。
 
-``` shell
-$ firebase use --add
+```shell
+firebase use --add
 ```
 
-* 先に作成した firebase プロジェクトを選択してください
-* `What alias do you want to use for this project? (e.g. staging)`
-    * 何でも構いません。 production など。
+- 先に作成した Firebase プロジェクトを選択
+- エイリアス名を入力（例: `production`）
 
-これにより、 `.firebaserc` ファイルが生成されていることを確認してください
+これにより、`.firebaserc` ファイルが生成されていることを確認してください。
 
-### デプロイ準備 (Authentication)
+### 6. Authentication の設定
 
-* Firebase コンソールから `Authentication` を選択
-* `ログイン方法を設定` から、以下を選択し完了してください
-    * `Google` を選択
-        * 右上の `有効にする` をチェック
-        * `プロジェクトのサポートメール` は任意のものを設定
+1. Firebase コンソール → 「Authentication」を選択
+2. 「始める」をクリック
+3. 「ログイン方法」タブ → 「Google」を選択
+4. 「有効にする」をオン
+5. 「プロジェクトのサポートメール」を設定
+6. 「保存」をクリック
 
-### デプロイ準備 (firestore)
+### 7. Firestore の設定
 
-* Firebase コンソールから `Database` を選択
-* `データベースの作成` から、以下を選択し完了してください
-    * `ロックモードで開始`
-    * `nam5 (us-central)`
+1. Firebase コンソール → 「Firestore Database」を選択
+2. 「データベースを作成」をクリック
+3. 「本番環境モードで開始」を選択
+4. ロケーションを選択（推奨: `asia-northeast1` = 東京）
+5. 「有効にする」をクリック
 
-### デプロイ準備 (functions)
+### 8. 依存パッケージのインストール
 
-以下のコマンドで node ライブラリのインストールをしてください
-
-``` shell
-$ cd functions
-$ npm install
-$ cd ../
+```shell
+cd functions
+npm install
+cd ..
 ```
 
-### デプロイ準備 (slack)
+### 9. Slack Webhook の設定
 
-slack から Webhook token を発行し、以下のコマンドで firebase の環境変数に設定してください。
-``` shell
-$ firebase functions:config:set slack.url='https://hooks.slack.com/services/xxxxx/xxxxx/xxxxxxxxxxxxx'
+#### 9.1 Slack Webhook URL の取得
+
+1. [Slack API](https://api.slack.com/apps) にアクセス
+2. 「Create New App」→「From scratch」を選択
+3. アプリ名（例: `Web Checker`）とワークスペースを選択して作成
+4. 左メニュー「Incoming Webhooks」をクリック
+5. 「Activate Incoming Webhooks」をオンにする
+6. ページ下部の「Add New Webhook to Workspace」をクリック
+7. 通知先チャンネルを選択して「許可する」
+8. 表示された Webhook URL をコピー
+
+#### 9.2 環境変数ファイルの作成
+
+`functions/.env` ファイルを作成し、Webhook URL を設定します。
+
+```shell
+cd functions
+touch .env
 ```
 
-### デプロイ
+`functions/.env` の内容:
 
-以下のコマンドを実行してデプロイを実行してください
-
-``` shell
-$ firebase deploy
+```env
+SLACK_URL=https://hooks.slack.com/services/XXXXX/XXXXX/XXXXXXXXXXXXX
 ```
 
-``` shell
-=== Deploying to 'xxx'...
+**注意**: `.env` ファイルは Git にコミットしないでください（`.gitignore` に追加済み）。
+
+### 10. デプロイ
+
+以下のコマンドを実行してデプロイを実行してください。
+
+```shell
+firebase deploy
+```
+
+デプロイ成功時の出力例:
+
+```
+=== Deploying to 'your-project-id'...
 
 i  deploying firestore, functions, hosting
-i  firestore: checking firestore.rules for compilation errors...
-i  firestore: reading indexes from firestore.indexes.json...
 ✔  firestore: rules file firestore.rules compiled successfully
-i  functions: ensuring necessary APIs are enabled...
 ✔  functions: all necessary APIs are enabled
-i  firestore: uploading rules firestore.rules...
-✔  firestore: deployed indexes in firestore.indexes.json successfully
-i  functions: preparing ./functions directory for uploading...
-i  functions: packaged ./functions (84.06 KB) for uploading
 ✔  functions: ./functions folder uploaded successfully
-i  hosting[xxx]: beginning deploy...
-i  hosting[xxx]: found 7 files in public
-✔  hosting[xxx]: file upload complete
+✔  hosting: file upload complete
 ✔  firestore: released rules firestore.rules to cloud.firestore
-i  functions: creating Node.js 8 function webFetcher(us-central1)...
-i  functions: creating Node.js 8 function webCrawler(us-central1)...
-i  functions: creating Node.js 8 function slackNotifier(us-central1)...
-i  functions: creating Node.js 8 function sendWelcomeEmail(us-central1)...
-i  scheduler: ensuring necessary APIs are enabled...
-i  pubsub: ensuring necessary APIs are enabled...
-⚠  scheduler: missing necessary APIs. Enabling now...
-✔  pubsub: all necessary APIs are enabled
-✔  scheduler: all necessary APIs are enabled
-✔  functions: created scheduler job firebase-schedule-webFetcher-us-central1
 ✔  functions[webFetcher(us-central1)]: Successful create operation.
 ✔  functions[webCrawler(us-central1)]: Successful create operation.
-✔  functions[sendWelcomeEmail(us-central1)]: Successful create operation.
 ✔  functions[slackNotifier(us-central1)]: Successful create operation.
-i  hosting[xxx]: finalizing version...
-✔  hosting[xxx]: version finalized
-i  hosting[xxx]: releasing new version...
-✔  hosting[xxx]: release complete
+✔  functions[sendWelcomeEmail(us-central1)]: Successful create operation.
+✔  hosting: release complete
 
 ✔  Deploy complete!
 
-Project Console: https://console.firebase.google.com/project/xxx/overview
-Hosting URL: https://xxx.firebaseapp.com
+Project Console: https://console.firebase.google.com/project/your-project-id/overview
+Hosting URL: https://your-project-id.web.app
 ```
 
-`Hosting URL: https://<project-id>.firebaseapp.com`
+### 11. ユーザーの有効化
 
-デプロイ成功時にログに表示される↑の URL にアクセスして、管理画面が表示されることを確認してください
+本アプリでは、セキュリティのため新規ユーザーは自動的に無効化されます。管理者が Firebase コンソールから手動で有効化する必要があります。
+
+#### 11.1 アプリにログイン
+
+1. デプロイ完了後、Hosting URL（`https://<project-id>.web.app`）にアクセス
+2. Google アカウントでログイン
+3. 新規ユーザーの場合、ログインできない状態になります
+
+#### 11.2 Slack 通知の確認
+
+新規ユーザーがログインすると、設定した Slack チャンネルに通知が届きます。
+
+#### 11.3 ユーザーの有効化
+
+1. Firebase コンソール → 「Authentication」→「Users」タブ
+2. 有効化したいユーザーの行をクリック
+3. 「アカウントを無効にする」のチェックを外す
+4. 「保存」をクリック
+
+#### 11.4 再ログイン
+
+ユーザー有効化後:
+
+1. アプリからログアウト（または画面をリロード）
+2. 再度ログイン
+3. スケジュール一覧画面が表示されれば成功
+
+## 使い方
+
+### スケジュールの登録
+
+1. ログイン後、スケジュール一覧画面で以下を入力:
+   - **スケジュール**: crontab 形式（例: `0 * * * *` = 毎時0分）
+   - **タイトル**: 任意の名前
+   - **URL**: 監視対象の URL
+   - **セレクタ**: CSS セレクタ（例: `#content`, `.main-text`）
+   - **通知先**: Slack チャンネル名（省略可）
+2. 「新規追加」をクリック
+
+### 動作の仕組み
+
+1. 5分毎に Cloud Scheduler が起動
+2. 登録されたスケジュールをチェック
+3. URL にアクセスし、セレクタで指定された要素を取得
+4. 前回の内容と比較し、変更があれば Slack に通知
+
+## 開発
+
+### TypeScript ビルド
+
+本プロジェクトは TypeScript で実装されています。
+
+```shell
+cd functions
+npm run build        # 一度ビルド
+npm run build:watch  # 監視モードで自動ビルド
+```
+
+**注意**: `firebase deploy` 実行時は自動的にビルドが実行されるため、手動でのビルドは開発時のみ必要です。
+
+### ローカルでのテスト実行
+
+```shell
+cd functions
+npm test
+```
+
+### 詳細なテスト出力
+
+```shell
+cd functions
+npm run devtest
+```
+
+### Functions のログ確認
+
+```shell
+cd functions
+npm run logs
+```
+
+## ライセンス
+
+MIT License

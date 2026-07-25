@@ -63,3 +63,8 @@ typings/
 
 # next.js build output
 .next
+
+# docs
+docs/review
+docs/plan
+docs/**
