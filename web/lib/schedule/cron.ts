@@ -23,18 +23,48 @@
  */
 
 export type CronValidation =
-  | { ok: true; nextRun: Date }
+  | { ok: true; nextCheckAt: Date }
   | { ok: false; reason: string };
 
 /** backend と揃えた評価タイムゾーン。 */
 const CRON_TZ = 'Asia/Tokyo';
 
 /**
- * cron 式を検証し、妥当なら次回実行時刻（JST 基準）を返す。
+ * webFetcher が起動する分。`'5 * * * *'` に対応する。
+ * @see functions/src/index.ts
+ */
+const SCHEDULER_MINUTE = 5;
+
+/**
+ * cron の発火時刻から、実際にクロールが走る時刻を求める。
  *
- * 返す `nextRun` は cron 式そのものの次回発火時刻であり、実際にクロールが走る
- * 時刻とは最大 1 時間ずれる（スケジューラが毎時 05 分にしか起動しないため）。
- * UI では「◯◯ ごろ」と丸めて見せること。
+ * スケジューラは毎時 05 分にしか起動せず、その瞬間に各スケジュールが
+ * 「直近の cron 発火時刻より後にチェック済みか」を判定する。したがって
+ * 実際のチェックは **cron 発火時刻以降で最初に来る :05** になる。
+ * cron が 9:00 を指していても実行は 9:05、9:30 を指していれば 10:05。
+ *
+ * この差を無視して cron の発火時刻をそのまま見せると、頻度の注記
+ * （「毎時 05 分ごろ」）と食い違って利用者を混乱させる。
+ */
+function toNextSchedulerTick(cronFireAt: Date): Date {
+  const tick = new Date(cronFireAt);
+  tick.setSeconds(0, 0);
+
+  if (tick.getMinutes() <= SCHEDULER_MINUTE) {
+    tick.setMinutes(SCHEDULER_MINUTE);
+  } else {
+    // その時間の :05 は過ぎているので次の時間へ送る。
+    tick.setHours(tick.getHours() + 1, SCHEDULER_MINUTE);
+  }
+
+  return tick;
+}
+
+/**
+ * cron 式を検証し、妥当なら次に実際チェックが走る時刻（JST 基準）を返す。
+ *
+ * 返すのは cron の理論上の発火時刻ではなく、スケジューラの起動間隔を
+ * 織り込んだ時刻。利用者が知りたいのは「いつ見に行ってくれるか」だから。
  */
 export async function validateCron(expression: string): Promise<CronValidation> {
   const trimmed = expression.trim();
@@ -46,7 +76,7 @@ export async function validateCron(expression: string): Promise<CronValidation> 
 
   try {
     const interval = cronParser.parseExpression(trimmed, { tz: CRON_TZ });
-    return { ok: true, nextRun: interval.next().toDate() };
+    return { ok: true, nextCheckAt: toNextSchedulerTick(interval.next().toDate()) };
   } catch (error) {
     return {
       ok: false,
