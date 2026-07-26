@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   limit as limitTo,
   orderBy,
@@ -96,6 +97,19 @@ export class ScheduleService {
       hasMore,
       nextCursorCreatedAt: hasMore ? (last?.createdAt ?? null) : null,
     };
+  }
+
+  /**
+   * 1 件取得する。存在しなければ null。
+   *
+   * 履歴画面の見出しに使う。現行 detail.html はスケジュール本体を読まないため、
+   * どの監視の履歴を見ているのか画面から分からなかった。Slack のリンクから
+   * 直接飛んでくる導線があるので、文脈が分かる情報は出したい。
+   */
+  static async get(id: string): Promise<Schedule | null> {
+    const db = getFirebaseDb();
+    const snapshot = await getDoc(doc(db, COLLECTION_NAME, id));
+    return snapshot.exists() ? toSchedule(snapshot.id, snapshot.data()) : null;
   }
 
   /**
