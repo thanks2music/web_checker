@@ -63,5 +63,20 @@ typings/
 # next.js build output
 .next
 
-# Local-only docs (design reviews, debug notes, in-progress plans)
+# docs/ is ignored by default because it also holds a vendored copy of the
+# Firebase documentation (docs/firebase/), which is large and not ours to track.
 docs/**
+
+# ...but the design history is tracked. These are the only record of why the
+# codebase looks the way it does, and Phase 2 imports this repository as a
+# single squashed commit — anything left untracked disappears at that point.
+#
+# This repository is public, so account identifiers (email addresses, billing
+# account IDs, GCP project IDs other than this project's) are redacted to
+# placeholders before anything lands here.
+!docs/plan/
+!docs/plan/**
+!docs/review/
+!docs/review/**
+!docs/debug/
+!docs/debug/**

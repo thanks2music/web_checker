@@ -16,20 +16,70 @@ service cloud.firestore {
       return isAuthenticated() && data.createdUser == request.auth.uid;
     }
 
+    // 監視対象 URL として許容する形か。
+    //
+    // https 限定にしているのは SSRF の緩和が目的。`webCrawlerOnWrite` は uri の変更を
+    // 検知して Admin 権限で即座に fetch するため、ここを通った文字列はそのまま
+    // Functions のエグレスから叩かれる（functions/src/lib/crawler.ts には
+    // スキーム検証も private IP ブロックも無い）。http を弾くことで、社内向けサービスや
+    // メタデータエンドポイント (http://169.254.169.254) といった平文の内部宛先を
+    // 大きく削れる。完全な SSRF 対策は crawler 側の別タスクで行う。
+    function isAllowedUri(uri) {
+      return uri is string
+        && uri.matches('^https://.*')
+        && uri.size() < 2048;
+    }
+
     // schedules コレクション
     match /schedules/{scheduleId} {
       // 承認済みユーザーはコレクション全体を読める（Web Checker はチーム共有の監視ダッシュボード運用）
       allow read: if isApproved();
 
       // 作成は承認済み + 必須フィールドの型検証 + 自分自身を `createdUser` として書き込むこと
+      //
+      // NOTE: create には `hasOnly()` を掛けていない。現行フロントエンド (public/index.html) が
+      // createdAt / checkedAt を同時に書いており、フィールドを絞ると既存 UI が壊れるため。
+      // クライアントが checkedAt を書くこと自体は契約違反だが、その是正は
+      // フロントエンド書き換え (Phase 1b) 側で行う。
       allow create: if isApproved()
-        && request.resource.data.uri is string
+        && isAllowedUri(request.resource.data.uri)
         && request.resource.data.selector is string
+        && request.resource.data.selector.size() < 512
         && request.resource.data.title is string
+        && request.resource.data.title.size() < 200
         && request.resource.data.createdUser == request.auth.uid;
 
-      // 更新・削除は承認済み + 自分が作成したドキュメントのみ
-      allow update: if isApproved() && isOwner(resource.data);
+      // 更新は承認済み + 所有者 + 変更してよいフィールドのみ。
+      //
+      // 強化前は `isApproved() && isOwner()` だけで、フィールド検証が一切なかった。
+      // 承認済みユーザーが DevTools から SDK を直接叩くことで、以下がすべて可能だった:
+      //
+      //   1. createdUser を他人の UID に書き換え
+      //      → isOwner() が二度と true にならず、そのドキュメントが恒久ロックされる
+      //        （Admin SDK でしか復旧できない）
+      //   2. createdAt を削除
+      //      → 一覧は orderBy('createdAt') で引くため、当該フィールドを持たない doc は
+      //        クエリ結果から除外される。UI から到達も修復もできなくなる
+      //   3. checkedAt を未来の値に設定
+      //      → webFetcher.isAlreadyChecked() が `prev < checkedAt` で恒久的に true を返し、
+      //        定期監視が静かに停止する（エラーも通知も出ない）
+      //
+      // いずれも「気付きにくく、クライアントからは戻せない」種類の破壊なので、
+      // 不変フィールドの固定と変更可能キーの allowlist をルール側で強制する。
+      allow update: if isApproved()
+        && isOwner(resource.data)
+        // 所有権の付け替えと作成日時の改変を禁止（上記 1. 2.）
+        && request.resource.data.createdUser == resource.data.createdUser
+        && request.resource.data.createdAt == resource.data.createdAt
+        // 変更してよいのはこの 6 キーのみ。checkedAt は backend 専有なのでここに含めない（上記 3.）
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['schedule', 'uri', 'title', 'selector', 'slack', 'updatedUser'])
+        && isAllowedUri(request.resource.data.uri)
+        && request.resource.data.selector is string
+        && request.resource.data.selector.size() < 512
+        && request.resource.data.title is string
+        && request.resource.data.title.size() < 200;
+
       allow delete: if isApproved() && isOwner(resource.data);
 
       // archives サブコレクション: 読み取りのみクライアントに許可、書き込みは Functions (Admin SDK) のみ
