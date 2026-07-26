@@ -2,16 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useAuth } from '@/lib/auth/auth-context';
 import { mapAuthError } from '@/lib/auth/auth-error';
 import { ScheduleService } from '@/lib/services/schedule.service';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { DeleteDialog } from '@/components/schedules/delete-dialog';
+import { ScheduleCreateForm } from '@/components/schedules/schedule-create-form';
 import { ScheduleRow } from '@/components/schedules/schedule-row';
+import { ScheduleRowEditor } from '@/components/schedules/schedule-row-editor';
 import type { Schedule } from '@/types/schedule';
 
 /**
- * スケジュール一覧。
+ * スケジュール一覧と CRUD。
  *
  * ## ページネーション方式
  *
@@ -19,23 +23,33 @@ import type { Schedule } from '@/types/schedule';
  * 前方向が素直で、戻るには endBefore + limitToLast とカーソル履歴の管理が要る。
  * 監視ダッシュボードは新しい順に上から眺める用途なので、追記型で足りる。
  *
- * 現行実装は limit なしの全件取得だった。
+ * ## 編集の排他制御
  *
- * ## エラー時に「何も無い」と嘘をつかない
+ * 同時に編集できるのは 1 行だけ（現行踏襲）。他行の編集・削除ボタンは
+ * 無効化する。現行は「編集中は全行の削除ボタンを非表示」にしていたが、
+ * 消えるより無効化の方が状態が読める。
  *
- * 読み込みに失敗したとき、現行 UI は `alert()` を出したうえで一覧を空のまま
- * 残していた。空の一覧は「登録が 0 件」に見えるので、取得失敗と区別できない。
- * ここでは失敗を明示し、再試行導線を出す。
+ * ## 保存後に再取得しない
+ *
+ * 現行は `location.href = 'index.html'` でページごと作り直していた。
+ * ここでは手元の配列を差し替える。`createdAt` は編集で変わらないので
+ * 並び順も壊れない。
  */
 
 const PAGE_SIZE = 20;
 
 export function ScheduleList() {
+  const { uid } = useAuth();
   const [items, setItems] = useState<Schedule[]>([]);
   const [cursor, setCursor] = useState<number | undefined>(undefined);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   /** StrictMode の二重実行で初回ロードが 2 回走らないようにする。 */
   const initialized = useRef(false);
@@ -50,15 +64,12 @@ export function ScheduleList() {
         cursorCreatedAt,
       });
 
-      // 追記型なので、初回（カーソル無し）だけ置き換えて以降は連結する。
       setItems((previous) =>
         cursorCreatedAt === undefined ? page.items : [...previous, ...page.items],
       );
       setHasMore(page.hasMore);
       setCursor(page.nextCursorCreatedAt ?? undefined);
     } catch (caught) {
-      // permission-denied は approved claim 未反映の可能性が高い。
-      // AuthProvider 側の分類をそのまま使い、文言を二重管理しない。
       const view = mapAuthError(caught);
       setError(view?.message ?? 'スケジュールの取得に失敗しました。');
     } finally {
@@ -72,6 +83,23 @@ export function ScheduleList() {
     void load();
   }, [load]);
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+
+    setDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await ScheduleService.remove(deleteTarget.id);
+      setItems((previous) => previous.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (caught) {
+      setDeleteError(mapAuthError(caught)?.message ?? 'スケジュールの削除に失敗しました。');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading && items.length === 0) {
     return <Spinner label="スケジュールを読み込んでいます" />;
   }
@@ -81,6 +109,13 @@ export function ScheduleList() {
       <h2 id="schedule-list-heading" className="text-xl font-bold">
         スケジュール一覧
       </h2>
+
+      {/* 編集中は追加フォームを出さない。同時に 2 つの編集状態を持たせない。 */}
+      {editingId === null ? (
+        <ScheduleCreateForm
+          onCreated={(created) => setItems((previous) => [created, ...previous])}
+        />
+      ) : null}
 
       {error ? (
         <div className="mt-4">
@@ -95,6 +130,14 @@ export function ScheduleList() {
         </div>
       ) : null}
 
+      {deleteError ? (
+        <div className="mt-4">
+          <Alert tone="danger" title="削除に失敗しました">
+            {deleteError}
+          </Alert>
+        </div>
+      ) : null}
+
       {!error && items.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
           登録されているスケジュールはありません。
@@ -103,9 +146,33 @@ export function ScheduleList() {
 
       {items.length > 0 ? (
         <ul className="mt-4 border-t border-border">
-          {items.map((schedule) => (
-            <ScheduleRow key={schedule.id} schedule={schedule} />
-          ))}
+          {items.map((schedule) =>
+            schedule.id === editingId ? (
+              <ScheduleRowEditor
+                key={schedule.id}
+                schedule={schedule}
+                onCancel={() => setEditingId(null)}
+                onSaved={(updated) => {
+                  setItems((previous) =>
+                    previous.map((item) => (item.id === updated.id ? updated : item)),
+                  );
+                  setEditingId(null);
+                }}
+              />
+            ) : (
+              <ScheduleRow
+                key={schedule.id}
+                schedule={schedule}
+                isOwner={schedule.createdUser !== null && schedule.createdUser === uid}
+                actionsDisabled={editingId !== null}
+                onEdit={() => setEditingId(schedule.id)}
+                onDelete={() => {
+                  setDeleteError(null);
+                  setDeleteTarget(schedule);
+                }}
+              />
+            ),
+          )}
         </ul>
       ) : null}
 
@@ -119,6 +186,15 @@ export function ScheduleList() {
             {loading ? '読み込み中…' : 'もっと読む'}
           </Button>
         </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <DeleteDialog
+          title={deleteTarget.title}
+          busy={deleting}
+          onConfirm={() => void handleDelete()}
+          onCancel={() => setDeleteTarget(null)}
+        />
       ) : null}
     </section>
   );
