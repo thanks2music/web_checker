@@ -73,7 +73,7 @@ jobs:
       # 気付ける場所がここしかないので CI で固定する。
       - name: Assert static export artifacts (legacy URL compatibility)
         run: |
-          for f in index.html 404.html login.html logout.html; do
+          for f in index.html 404.html login.html logout.html detail.html; do
             test -f "web/out/$f" || {
               echo "::error::web/out/$f is missing — check next.config.ts trailingSlash"
               exit 1
