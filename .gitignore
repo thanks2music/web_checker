@@ -58,7 +58,15 @@ typings/
 .yarn-integrity
 
 # dotenv environment variables file
+#
+# `.env` alone does not match `.env.local` / `.env.production` etc — gitignore
+# patterns are literal, not prefixes. Without the wildcard below, `web/.env.local`
+# (which holds the real Firebase web config) would be committable to a public repo.
 .env
+.env.*
+# ...but the templates are meant to be tracked.
+!.env.example
+!.env.sample
 
 # next.js build output
 .next
