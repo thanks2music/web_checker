@@ -20,7 +20,7 @@
     "devtest": "jest --silent=false --verbose"
   },
   "engines": {
-    "node": "22"
+    "node": "24"
   },
   "dependencies": {
     "@google-cloud/pubsub": "^4.9.0",
@@ -39,7 +39,7 @@
     "@firebase/rules-unit-testing": "^5.0.1",
     "@types/diff": "^7.0.0",
     "@types/jest": "^29.5.14",
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.5.2",
     "eslint": "^9.15.0",
     "firebase": "^12.16.0",
     "firebase-tools": "^15.24.0",

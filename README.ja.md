@@ -4,40 +4,63 @@
 
 Web ページの変更を監視して Slack に通知するアプリケーションです。
 
-Firebase（Cloud Functions v2 + Firestore + Hosting)上に構築され、TypeScript で実装されています。
+Firebase（Cloud Functions v2 + Firestore + Hosting）上に構築され、TypeScript で実装されています。
 
 ## 動作の仕組み
 
 1. スケジュール関数（`webFetcher`）が **1 時間に 1 回**（毎時 5 分）起動します。
-2. Firestore に登録された全スケジュールを読み込み、各スケジュール自身の cron 式を評価してチェック時期が来ているか判定します。
+2. Firestore に登録された全スケジュールを読み込み、**各スケジュール自身の cron 式**を評価してチェック時期が来ているか判定します。
 3. チェック対象のスケジュールは Pub/Sub トピックへ publish され、`webCrawler` が対象 URL を取得して CSS セレクタで指定された要素を抽出します。
 4. 抽出した内容を前回のスナップショット（Firestore に保存）と比較し、変更があれば差分を Slack Incoming Webhook へ通知します。
 5. スケジュールの作成・編集（`uri` / `selector` の変更）時は、即時チェックが実行されます（`webCrawlerOnWrite`）。
 
+スケジューラ自体が毎時起動のため、1 時間より短い間隔をスケジュールに指定しても効果はありません。
+
 ### Cloud Functions 一覧
 
-| 関数 | トリガー | 役割 |
-|---|---|---|
-| `webFetcher` | スケジューラ（`5 * * * *`） | チェック時期のスケジュールを判定し Pub/Sub へ publish |
-| `webCrawler` | Pub/Sub（`webChecker` トピック） | ページをクロールし、前回スナップショットと差分比較、履歴保存 |
-| `webCrawlerOnWrite` | Firestore 書き込み（`schedules/{id}`） | `uri` / `selector` 変更時に即時チェック |
-| `slackNotifier` | Pub/Sub（`slackNotifier` トピック） | Slack Incoming Webhook へペイロード送信 |
-| `sendWelcomeEmail` | Auth `onCreate`（v1） | 新規ユーザーを無効化し、管理者承認用に Slack 通知 |
+全関数が 2nd gen で、**Node.js 24** ランタイム上で動作します。
+
+| 関数 | トリガー | メモリ | 役割 |
+|---|---|---|---|
+| `webFetcher` | スケジューラ（`5 * * * *`） | 256 MiB | チェック時期のスケジュールを判定し Pub/Sub へ publish |
+| `webCrawler` | Pub/Sub（`webChecker` トピック） | 256 MiB | ページをクロールし、前回スナップショットと差分比較、履歴保存 |
+| `webCrawlerOnWrite` | Firestore 書き込み（`schedules/{id}`） | 256 MiB | `uri` / `selector` 変更時に即時チェック |
+| `slackNotifier` | Pub/Sub（`slackNotifier` トピック） | 256 MiB | Secret Manager から Webhook URL を読み、Slack へ送信 |
+| `beforeCreate` | Auth ブロッキング（`beforeUserCreated`） | 256 MiB | 新規ユーザーを無効状態で作成し、管理者承認用に Slack 通知 |
+
+> **メモリについて**: 全関数が単一の `index.ts` バンドルを共有するため、どの関数も起動時に依存パッケージ一式（`cheerio`, `axios`, `iconv-lite` など）をロードします。128 MiB では起動しきれず、readiness probe の前に OOM で強制終了されます。バンドルを関数ごとに分割しない限り 256 MiB を維持してください。
+
+> **ランタイムについて**: `nodejs24` は **2nd gen 関数専用**で、**firebase-tools v15 以降**が必要です。v14 はデプロイ時に不正なランタイムとして拒否します。
 
 ## 必要要件
 
-- Node.js 20 以上
-- Firebase CLI
+- **Node.js 24**（`.tool-versions` 参照。Cloud Functions のランタイムも `nodejs24` に固定）
+- **pnpm 10**（本リポジトリは pnpm workspace）
+- **firebase-tools v15 以降**（v14 では `nodejs24` ランタイムをデプロイ不可）
 - Google アカウント
 - Slack ワークスペース（Webhook URL 発行用）
+- Java 21 以降（Firestore Rules テストをローカル実行する場合。エミュレータが要求）
+
+## リポジトリ構成
+
+```
+.
+├── firebase.json          # Firestore / Hosting / Functions 設定
+├── .firebaserc            # プロジェクトエイリアス（default, debug）
+├── firestore.rules        # セキュリティルール
+├── pnpm-workspace.yaml    # workspace ルート（functions/ を対象）
+├── functions/             # @revolution/web-checker-functions（Cloud Functions）
+└── public/                # Firebase Hosting が配信する静的管理画面
+```
 
 ## デプロイ方法
 
-### 1. リポジトリのクローン
+### 1. クローンと依存インストール
 
 ```shell
 git clone <repository-url>
 cd web_checker
+pnpm install
 ```
 
 以下の作業は、特に指定がない限りリポジトリのルートディレクトリ直下で行ってください。
@@ -58,38 +81,37 @@ Cloud Functions を使用するため、Blaze（従量制）プランが必要�
 2. 「Blaze 従量制」を選択
 3. 請求先アカウントを設定（なければ Google Cloud Platform から作成）
 
-### 3. Firebase CLI の準備
+> 1 つの請求先アカウントに紐付けられるプロジェクト数は既定で 5 件です。上限に達した場合は、未使用プロジェクトのリンクを解除するか、割り当て増加を申請してください。
 
-Firebase CLI がインストールされていない場合は、以下のコマンドでインストールしてください。
+### 3. Firebase CLI の認証
 
 ```shell
-npm install -g firebase-tools
+pnpm --filter @revolution/web-checker-functions exec firebase login
 ```
 
-参考: https://firebase.google.com/docs/cli?hl=ja
+firebase-tools は workspace 内にバージョン固定で入っているため、グローバルの `firebase` ではなく pnpm 経由での実行を推奨します（グローバルが v14 の場合、`nodejs24` ランタイムのデプロイに失敗します）。
 
-### 4. Firebase CLI の認証
-
-以下のコマンドを実行して、Google 認証を済ませてください。
+### 4. Firebase プロジェクトと作業ディレクトリの紐付け
 
 ```shell
-firebase login
-```
-
-### 5. Firebase プロジェクトと作業ディレクトリとの紐付け
-
-以下のコマンドを実行して、プロジェクトに紐付けてください。
-
-```shell
-firebase use --add
+pnpm --filter @revolution/web-checker-functions exec firebase use --add
 ```
 
 - 先に作成した Firebase プロジェクトを選択
 - エイリアス名を入力（例: `production`）
 
-これにより、`.firebaserc` ファイルが生成されていることを確認してください。
+`.firebaserc` にエイリアスが記載されていることを確認してください。
 
-### 6. Authentication の設定
+### 5. Authentication を Identity Platform にアップグレード
+
+`beforeCreate` ブロッキング関数の利用には **Identity Platform が必須**です。未対応のままだと、Auth への紐付け時に `Blocking Functions may only be configured for GCIP projects` エラーで失敗します。
+
+1. Firebase コンソール → Authentication → 設定 → **ブロッキング関数**
+2. 「Identity Platform へのアップグレード」の案内に従って実行
+
+Identity Platform には Blaze プランで月間アクティブユーザー 5 万人の無料枠があります。**このアップグレードは元に戻せません。**
+
+### 6. Google ログインの有効化
 
 1. Firebase コンソール → 「Authentication」を選択
 2. 「始める」をクリック
@@ -98,7 +120,7 @@ firebase use --add
 5. 「プロジェクトのサポートメール」を設定
 6. 「保存」をクリック
 
-### 7. Firestore の設定
+### 7. Firestore データベースの作成
 
 1. Firebase コンソール → 「Firestore Database」を選択
 2. 「データベースを作成」をクリック
@@ -106,17 +128,9 @@ firebase use --add
 4. ロケーションを選択（推奨: `us-central1`。Functions のリージョンと一致し、無料枠の範囲内）
 5. 「有効にする」をクリック
 
-### 8. 依存パッケージのインストール
+### 8. Slack Webhook を Secret Manager に登録
 
-```shell
-cd functions
-npm install
-cd ..
-```
-
-### 9. Slack Webhook の設定
-
-#### 9.1 Slack Webhook URL の取得
+#### 8.1 Slack Webhook URL の取得
 
 1. [Slack API](https://api.slack.com/apps) にアクセス
 2. 「Create New App」→「From scratch」を選択
@@ -127,130 +141,102 @@ cd ..
 7. 通知先チャンネルを選択して「許可する」
 8. 表示された Webhook URL をコピー
 
-#### 9.2 環境変数ファイルの作成
+#### 8.2 Cloud Secret Manager へ登録
 
-`functions/.env` ファイルを作成し、Webhook URL を設定します。
-
-```shell
-cd functions
-touch .env
-```
-
-`functions/.env` の内容:
-
-```env
-SLACK_URL=https://hooks.slack.com/services/XXXXX/XXXXX/XXXXXXXXXXXXX
-```
-
-**注意**: `.env` ファイルは Git にコミットしないでください（`.gitignore` に追加済み）。
-
-### 10. デプロイ
-
-以下のコマンドを実行してデプロイを実行してください。
+Webhook URL は秘匿情報のため、`.env` ファイルでは管理しません。`slackNotifier` が `defineSecret` で宣言し、Firebase が実行時にマウントします。
 
 ```shell
-firebase deploy
+pnpm --filter @revolution/web-checker-functions exec \
+  firebase functions:secrets:set SLACK_URL_REVOLUTION_WEB_CHECKER
 ```
 
-デプロイ成功時の出力例:
+プロンプトに URL を貼り付けてください。シェル履歴には残りません。初回実行時に CLI が Secret Manager API を有効化し、次回デプロイ時に実行サービスアカウントへ読み取り権限を付与します。
 
-```
-=== Deploying to 'your-project-id'...
+値をローテーションする場合は同じコマンドを再実行し（新しいバージョンが作成されます）、**`slackNotifier` を再デプロイ**してください。関数はデプロイ時点のシークレットバージョンにピン留めされるためです。
 
-i  deploying firestore, functions, hosting
-✔  firestore: rules file firestore.rules compiled successfully
-✔  functions: all necessary APIs are enabled
-✔  functions: ./functions folder uploaded successfully
-✔  hosting: file upload complete
-✔  firestore: released rules firestore.rules to cloud.firestore
-✔  functions[webFetcher(us-central1)]: Successful create operation.
-✔  functions[webCrawler(us-central1)]: Successful create operation.
-✔  functions[webCrawlerOnWrite(us-central1)]: Successful create operation.
-✔  functions[slackNotifier(us-central1)]: Successful create operation.
-✔  functions[sendWelcomeEmail(us-central1)]: Successful create operation.
-✔  hosting: release complete
-
-✔  Deploy complete!
-
-Project Console: https://console.firebase.google.com/project/your-project-id/overview
-Hosting URL: https://your-project-id.web.app
+```shell
+pnpm --filter @revolution/web-checker-functions exec \
+  firebase deploy --only functions:slackNotifier
 ```
 
-### 11. ユーザーの有効化
+> **`functions/.env` に `SLACK_URL` や `HOSTING_URL` を書かないでください。** Firebase CLI は `.env` の全エントリを、デプロイした関数の**平文の環境変数としてアップロード**します。どちらの変数もコードからは既に参照されていません（Webhook は Secret Manager から、Hosting URL は `GCLOUD_PROJECT` から導出）。ローカル作業で必要になり得るキーは `.env.example` に記載しています。
 
-本アプリでは、セキュリティのため新規ユーザーは自動的に無効化されます。管理者が Firebase コンソールから手動で有効化する必要があります。
+### 9. デプロイ
 
-#### 11.1 アプリにログイン
+```shell
+pnpm --filter @revolution/web-checker-functions exec firebase deploy
+```
 
-1. デプロイ完了後、Hosting URL（`https://<project-id>.web.app`）にアクセス
-2. Google アカウントでログイン
-3. 新規ユーザーの場合、ログインできない状態になります
+`firebase.json` の predeploy で TypeScript のビルドが自動実行されるため、手動ビルドは不要です。
 
-#### 11.2 Slack 通知の確認
+### 10. ブロッキング関数の紐付け
 
-新規ユーザーがログインすると、設定した Slack チャンネルに通知が届きます。
+初回デプロイ完了後、認証フローに関数を組み込む必要があります。
 
-#### 11.3 ユーザーの有効化
-
-1. Firebase コンソール → 「Authentication」→「Users」タブ
-2. 有効化したいユーザーの行をクリック
-3. 「アカウントを無効にする」のチェックを外す
+1. Firebase コンソール → Authentication → 設定 → **ブロッキング関数**
+2. **アカウント作成前（`beforeCreate`）** に `beforeCreate(us-central1)` を選択
+3. 「ログイン前」は None のまま、「追加のプロバイダ トークン認証情報」は全てチェックなしのまま
 4. 「保存」をクリック
 
-#### 11.4 再ログイン
+保存するまでは新規ユーザーが**有効な状態で作成され**、承認フローがバイパスされます。
 
-ユーザー有効化後:
+### 11. 最初のユーザーを承認
 
-1. アプリからログアウト（または画面をリロード）
-2. 再度ログイン
-3. スケジュール一覧画面が表示されれば成功
+新規ユーザーは無効状態で作成され、管理者が承認するまでログインできません。承認処理では `disabled: false` と `approved: true` カスタムクレームの両方を設定します（後者は `firestore.rules` が要求します）。
+
+1. Hosting URL（`https://<project-id>.web.app`）にアクセスし、Google でログインします。ログインは拒否されますが**これは想定通り**で、新規 UID を含む Slack 通知が届きます。
+2. その UID を使って承認します。
+
+```shell
+gcloud auth application-default login   # 初回のみ
+cd functions
+pnpm run build
+GOOGLE_CLOUD_PROJECT=<project-id> node dist/scripts/setAdmin.js <UID>
+```
+
+3. ログアウトして再ログインすると、スケジュール一覧画面が表示されます。
 
 ## 使い方
 
 ### スケジュールの登録
 
 1. ログイン後、スケジュール一覧画面で以下を入力:
-   - **スケジュール**: crontab 形式（例: `0 * * * *` = 毎時 0 分）。ページのチェック頻度を制御します。全体のスケジューラが 1 時間に 1 回の起動のため、1 時間未満の間隔を指定しても効果はありません
+   - **スケジュール**: crontab 形式（例: `0 * * * *` = 1 時間に 1 回。これが既定値）。1 時間より短い間隔は効果がありません
    - **タイトル**: 任意の名前
    - **URL**: 監視対象の URL
    - **セレクタ**: CSS セレクタ（例: `#content`, `.main-text`）
    - **通知先**: Slack チャンネル名（省略可。Webhook のデフォルトを上書き）
 2. 「新規追加」をクリック
 
+初回のクロールは即座に実行され、「新規追加されました」という通知が届きます。2 回目以降は対象コンテンツに変更があった場合のみ通知されます。
+
 ## 開発
 
-### TypeScript ビルド
-
-本プロジェクトは TypeScript で実装されています。
-
 ```shell
-cd functions
-npm run build        # 一度ビルド
-npm run build:watch  # 監視モードで自動ビルド
+pnpm install       # workspace の依存をインストール
+pnpm lint          # ESLint（flat config、型情報を使うルール込み）
+pnpm type-check    # tsc --noEmit
+pnpm test          # Jest ユニットテスト（ネットワークは nock でモック）
+pnpm build         # tsc
 ```
 
-**注意**: `firebase deploy` 実行時は自動的にビルドが実行されるため、手動でのビルドは開発時のみ必要です。
+### Firestore Rules テスト
 
-### ローカルでのテスト実行
-
-```shell
-cd functions
-npm test
-```
-
-### 詳細なテスト出力
+Firestore エミュレータを使うため、PATH に JDK が必要です。
 
 ```shell
-cd functions
-npm run devtest
+pnpm --filter @revolution/web-checker-functions test:rules
 ```
 
-### Functions のログ確認
+### ログの確認
 
 ```shell
-cd functions
-npm run logs
+pnpm --filter @revolution/web-checker-functions exec firebase functions:log
 ```
+
+## 継続的インテグレーション
+
+`.github/workflows/ci.yml` が `main` への push と pull request のたびに実行されます。内容は lint、type-check、ユニットテスト、Firestore Rules テスト（JDK 21 のエミュレータ）、build です。Node バージョンは `.tool-versions` から読み込むため、CI とローカル環境が乖離しません。
 
 ## ライセンス
 

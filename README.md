@@ -9,35 +9,58 @@ Built on Firebase (Cloud Functions v2 + Firestore + Hosting) and written in Type
 ## How It Works
 
 1. A scheduled function (`webFetcher`) runs **hourly** (at minute 5).
-2. It loads every registered schedule from Firestore and evaluates each schedule's own cron expression to decide whether it is due for a check.
+2. It loads every registered schedule from Firestore and evaluates **each schedule's own cron expression** to decide whether that schedule is due for a check.
 3. Due schedules are published to a Pub/Sub topic, and `webCrawler` fetches each target URL and extracts the element specified by a CSS selector.
 4. The extracted content is compared with the previous snapshot (stored in Firestore). If it changed, a diff is posted to Slack via an Incoming Webhook.
 5. Creating or editing a schedule (`uri` / `selector`) triggers an immediate check (`webCrawlerOnWrite`).
 
+Because the scheduler itself ticks hourly, a per-schedule interval shorter than one hour has no effect.
+
 ### Cloud Functions
 
-| Function | Trigger | Role |
-|---|---|---|
-| `webFetcher` | Scheduler (`5 * * * *`) | Finds schedules due for a check and publishes them to Pub/Sub |
-| `webCrawler` | Pub/Sub (`webChecker` topic) | Crawls the page, diffs against the last snapshot, stores archives |
-| `webCrawlerOnWrite` | Firestore write on `schedules/{id}` | Runs an immediate check when `uri` or `selector` changes |
-| `slackNotifier` | Pub/Sub (`slackNotifier` topic) | Sends the payload to the Slack Incoming Webhook |
-| `sendWelcomeEmail` | Auth `onCreate` (v1) | Disables new users and notifies Slack for admin approval |
+All functions are 2nd gen and run on the **Node.js 24** runtime.
+
+| Function | Trigger | Memory | Role |
+|---|---|---|---|
+| `webFetcher` | Scheduler (`5 * * * *`) | 256 MiB | Finds schedules due for a check and publishes them to Pub/Sub |
+| `webCrawler` | Pub/Sub (`webChecker` topic) | 256 MiB | Crawls the page, diffs against the last snapshot, stores archives |
+| `webCrawlerOnWrite` | Firestore write on `schedules/{id}` | 256 MiB | Runs an immediate check when `uri` or `selector` changes |
+| `slackNotifier` | Pub/Sub (`slackNotifier` topic) | 256 MiB | Reads the webhook URL from Secret Manager and posts to Slack |
+| `beforeCreate` | Auth blocking (`beforeUserCreated`) | 256 MiB | Creates new users disabled and notifies Slack for admin approval |
+
+> **Note on memory**: every function shares a single `index.ts` bundle, so each one loads the full dependency set (`cheerio`, `axios`, `iconv-lite`, …) at startup. 128 MiB is not enough to boot — the container is OOM-killed before its readiness probe. Keep these at 256 MiB unless the bundle is split per function.
+
+> **Note on the runtime**: `nodejs24` is available for **2nd gen functions only**, and requires **firebase-tools v15 or later** — v14 rejects it as an invalid runtime at deploy time.
 
 ## Requirements
 
-- Node.js 20 or later
-- Firebase CLI
+- **Node.js 24** (see `.tool-versions`; the Cloud Functions runtime is pinned to `nodejs24`)
+- **pnpm 10** (this repository is a pnpm workspace)
+- **firebase-tools v15 or later** (v14 cannot deploy the `nodejs24` runtime)
 - A Google account
 - A Slack workspace (to issue an Incoming Webhook URL)
+- Java 21 or later, if you want to run the Firestore Rules tests locally (required by the emulator)
+
+## Repository layout
+
+```
+.
+├── firebase.json          # Firestore / Hosting / Functions config
+├── .firebaserc            # project aliases (default, debug)
+├── firestore.rules        # security rules
+├── pnpm-workspace.yaml    # workspace root (scopes to functions/)
+├── functions/             # @revolution/web-checker-functions (Cloud Functions)
+└── public/                # static admin UI served by Firebase Hosting
+```
 
 ## Deployment
 
-### 1. Clone the repository
+### 1. Clone and install
 
 ```shell
 git clone <repository-url>
 cd web_checker
+pnpm install
 ```
 
 Run all following steps from the repository root unless noted otherwise.
@@ -58,32 +81,37 @@ Cloud Functions requires the Blaze (pay-as-you-go) plan.
 2. Select "Blaze (pay as you go)"
 3. Set up a billing account (create one in Google Cloud if you don't have one)
 
-### 3. Install the Firebase CLI
+> A single billing account can be linked to five projects by default. If you hit that quota, either unlink an unused project or request an increase.
+
+### 3. Authenticate the Firebase CLI
 
 ```shell
-npm install -g firebase-tools
+pnpm --filter @revolution/web-checker-functions exec firebase login
 ```
 
-Reference: https://firebase.google.com/docs/cli
+The pinned firebase-tools lives in the workspace, so prefer invoking it through pnpm rather than a globally installed `firebase` (a global v14 will fail on the `nodejs24` runtime).
 
-### 4. Authenticate the Firebase CLI
-
-```shell
-firebase login
-```
-
-### 5. Link the project to this working directory
+### 4. Link the project to this working directory
 
 ```shell
-firebase use --add
+pnpm --filter @revolution/web-checker-functions exec firebase use --add
 ```
 
 - Select the Firebase project you created
 - Enter an alias (e.g. `production`)
 
-Confirm that a `.firebaserc` file has been generated.
+Confirm that `.firebaserc` lists the alias.
 
-### 6. Configure Authentication
+### 5. Upgrade Authentication to Identity Platform
+
+The `beforeCreate` blocking function **requires Identity Platform**. Without it, deployment of the Auth binding fails with `Blocking Functions may only be configured for GCIP projects`.
+
+1. Firebase console → Authentication → Settings → **Blocking functions**
+2. Follow the "Upgrade to Identity Platform" prompt and confirm
+
+Identity Platform includes a free tier of 50,000 MAU on the Blaze plan. **The upgrade cannot be reverted.**
+
+### 6. Enable Google sign-in
 
 1. Firebase console → "Authentication"
 2. Click "Get started"
@@ -92,7 +120,7 @@ Confirm that a `.firebaserc` file has been generated.
 5. Set the project support email
 6. Click "Save"
 
-### 7. Configure Firestore
+### 7. Create the Firestore database
 
 1. Firebase console → "Firestore Database"
 2. Click "Create database"
@@ -100,17 +128,9 @@ Confirm that a `.firebaserc` file has been generated.
 4. Choose a location (recommended: `us-central1`, which matches the Functions region and stays within the free tier)
 5. Click "Enable"
 
-### 8. Install dependencies
+### 8. Register the Slack webhook in Secret Manager
 
-```shell
-cd functions
-npm install
-cd ..
-```
-
-### 9. Configure the Slack Webhook
-
-#### 9.1 Get a Slack Webhook URL
+#### 8.1 Get a Slack Webhook URL
 
 1. Open the [Slack API](https://api.slack.com/apps) page
 2. "Create New App" → "From scratch"
@@ -121,128 +141,102 @@ cd ..
 7. Select the notification channel and click "Allow"
 8. Copy the generated Webhook URL
 
-#### 9.2 Create the environment file
+#### 8.2 Store it in Cloud Secret Manager
 
-Create `functions/.env` and set the Webhook URL:
-
-```shell
-cd functions
-touch .env
-```
-
-Contents of `functions/.env`:
-
-```env
-SLACK_URL=https://hooks.slack.com/services/XXXXX/XXXXX/XXXXXXXXXXXXX
-```
-
-**Note**: Never commit the `.env` file to Git (it is already listed in `.gitignore`).
-
-### 10. Deploy
+The webhook URL is a secret and is **not** kept in a `.env` file. `slackNotifier` declares it via `defineSecret` and Firebase mounts it at runtime.
 
 ```shell
-firebase deploy
+pnpm --filter @revolution/web-checker-functions exec \
+  firebase functions:secrets:set SLACK_URL_REVOLUTION_WEB_CHECKER
 ```
 
-Example output on success:
+Paste the URL at the prompt. Nothing is written to your shell history. The CLI enables the Secret Manager API on first use and grants the runtime service account read access during the next deploy.
 
-```
-=== Deploying to 'your-project-id'...
+To rotate the value later, run the same command again — it creates a new version — then **redeploy `slackNotifier`**, because functions are pinned to the secret version they were deployed with:
 
-i  deploying firestore, functions, hosting
-✔  firestore: rules file firestore.rules compiled successfully
-✔  functions: all necessary APIs are enabled
-✔  functions: ./functions folder uploaded successfully
-✔  hosting: file upload complete
-✔  firestore: released rules firestore.rules to cloud.firestore
-✔  functions[webFetcher(us-central1)]: Successful create operation.
-✔  functions[webCrawler(us-central1)]: Successful create operation.
-✔  functions[webCrawlerOnWrite(us-central1)]: Successful create operation.
-✔  functions[slackNotifier(us-central1)]: Successful create operation.
-✔  functions[sendWelcomeEmail(us-central1)]: Successful create operation.
-✔  hosting: release complete
-
-✔  Deploy complete!
-
-Project Console: https://console.firebase.google.com/project/your-project-id/overview
-Hosting URL: https://your-project-id.web.app
+```shell
+pnpm --filter @revolution/web-checker-functions exec \
+  firebase deploy --only functions:slackNotifier
 ```
 
-### 11. Approve users
+> **Do not create `functions/.env` with `SLACK_URL` or `HOSTING_URL`.** The Firebase CLI uploads every entry in that file as a plaintext environment variable on the deployed functions. Neither variable is read by the code any more: the webhook comes from Secret Manager, and the hosting URL is derived from `GCLOUD_PROJECT`. `.env.example` documents the only key you may need for local work.
 
-For security, new users are disabled automatically. An administrator must enable them manually from the Firebase console.
+### 9. Deploy
 
-#### 11.1 Sign in to the app
+```shell
+pnpm --filter @revolution/web-checker-functions exec firebase deploy
+```
 
-1. After deployment, open the Hosting URL (`https://<project-id>.web.app`)
-2. Sign in with a Google account
-3. New users will not be able to proceed yet
+`firebase.json` runs the TypeScript build as a predeploy step, so no manual build is needed.
 
-#### 11.2 Check the Slack notification
+### 10. Bind the blocking function
 
-When a new user signs in, a notification is sent to the configured Slack channel.
+After the first successful deploy, the function must be wired into the auth flow:
 
-#### 11.3 Enable the user
-
-1. Firebase console → "Authentication" → "Users" tab
-2. Click the row of the user you want to enable
-3. Uncheck "Disable account"
+1. Firebase console → Authentication → Settings → **Blocking functions**
+2. Set **Before account creation (`beforeCreate`)** to `beforeCreate(us-central1)`
+3. Leave "Before sign-in" as None, and leave all "provider token credentials" checkboxes unchecked
 4. Click "Save"
 
-#### 11.4 Sign in again
+Until this is saved, new users are created **enabled**, bypassing the approval flow.
 
-After the user is enabled:
+### 11. Approve the first user
 
-1. Sign out of the app (or reload the page)
-2. Sign in again
-3. If the schedule list screen appears, you are all set
+New users are created disabled and cannot sign in until an administrator approves them. Approval sets both `disabled: false` and the `approved: true` custom claim, which `firestore.rules` requires.
+
+1. Open the Hosting URL (`https://<project-id>.web.app`) and sign in with Google. The attempt is rejected — this is expected — and a Slack notification containing the new UID is sent.
+2. Grant approval using that UID:
+
+```shell
+gcloud auth application-default login   # first time only
+cd functions
+pnpm run build
+GOOGLE_CLOUD_PROJECT=<project-id> node dist/scripts/setAdmin.js <UID>
+```
+
+3. Sign out and sign in again. The schedule list should now load.
 
 ## Usage
 
 ### Registering a schedule
 
 1. After signing in, fill in the following on the schedule list screen:
-   - **Schedule**: crontab format (e.g. `0 * * * *` = every hour on the hour). This controls how often the page is checked. Note that the global scheduler ticks hourly, so intervals shorter than one hour take no effect.
+   - **Schedule**: crontab format (e.g. `0 * * * *` = hourly, the default). Intervals shorter than one hour have no effect.
    - **Title**: any name
    - **URL**: the page to monitor
    - **Selector**: a CSS selector (e.g. `#content`, `.main-text`)
-   - **Channel**: a Slack channel name (optional; overrides the Webhook default)
+   - **Channel**: a Slack channel name (optional; overrides the webhook default)
 2. Click "Add"
+
+The first crawl runs immediately and posts a "newly added" notification. Subsequent runs only notify when the selected content changes.
 
 ## Development
 
-### TypeScript build
-
-This project is written in TypeScript.
-
 ```shell
-cd functions
-npm run build        # one-shot build
-npm run build:watch  # rebuild on file changes
+pnpm install       # install workspace dependencies
+pnpm lint          # ESLint (flat config, type-aware rules)
+pnpm type-check    # tsc --noEmit
+pnpm test          # Jest unit tests (network calls are mocked with nock)
+pnpm build         # tsc
 ```
 
-**Note**: `firebase deploy` runs the build automatically; manual builds are only needed during development.
+### Firestore Rules tests
 
-### Running tests locally
-
-```shell
-cd functions
-npm test
-```
-
-### Verbose test output
+These run against the Firestore emulator and need a JDK on your PATH:
 
 ```shell
-cd functions
-npm run devtest
+pnpm --filter @revolution/web-checker-functions test:rules
 ```
 
-### Viewing Functions logs
+### Watching logs
 
 ```shell
-cd functions
-npm run logs
+pnpm --filter @revolution/web-checker-functions exec firebase functions:log
 ```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request against `main`: lint, type-check, unit tests, Firestore Rules tests (emulator with JDK 21), and build. The Node version is read from `.tool-versions` so CI and local development cannot drift apart.
 
 ## License
 

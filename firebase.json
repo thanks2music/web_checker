@@ -13,7 +13,7 @@
   },
   "functions": {
     "source": "./functions",
-    "runtime": "nodejs22",
+    "runtime": "nodejs24",
     "predeploy": [
       "pnpm --filter @revolution/web-checker-functions run build"
     ]
