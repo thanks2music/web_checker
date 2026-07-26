@@ -4,23 +4,36 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
-    "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
+    "public": "web/out",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "predeploy": ["pnpm --filter @revolution/web-checker-web run build"],
+    "rewrites": [
+      { "source": "/detail", "destination": "/detail.html" },
+      { "source": "/login", "destination": "/login.html" },
+      { "source": "/logout", "destination": "/logout.html" }
+    ],
+    "headers": [
+      {
+        "source": "/_next/static/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        ]
+      },
+      {
+        "source": "**/*.@(html)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      }
     ]
   },
   "functions": {
     "source": "./functions",
     "runtime": "nodejs24",
-    "predeploy": [
-      "pnpm --filter @revolution/web-checker-functions run build"
-    ]
+    "predeploy": ["pnpm --filter @revolution/web-checker-functions run build"]
   },
   "emulators": {
-    "firestore": {
-      "port": 8808
-    }
+    "auth": { "port": 9099 },
+    "firestore": { "port": 8808 },
+    "hosting": { "port": 5000 },
+    "ui": { "enabled": true, "port": 4000 }
   }
 }
