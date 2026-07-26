@@ -171,25 +171,84 @@ web-checker/
 | ログイン | FirebaseUI + Google | カスタム UI + `signInWithPopup` |
 | スケジュール設定 | cron 文字列直接入力 | **実行頻度をスケジュール毎に設定できる UI**（決定事項 #2 の正式仕様化。デフォルト 1 時間に 1 回） |
 
-**DoD（受け入れ基準）**:
-- 上記 4 画面の機能パリティ（既存機能の欠落ゼロ）+ ページネーション動作
-- `next build`（静的エクスポート）が CI で通過し、Firebase Hosting で稼働
-- 認証フロー（未承認ユーザーの disabled 挙動含む）がエミュレータ + 実環境で確認済み
-- Playwright（またはエミュレータ + component test）で主要フロー（ログイン → スケジュール追加 → 一覧反映）の自動テスト
-- jQuery / Bootstrap / compat SDK / FirebaseUI への依存ゼロ
+**DoD（受け入れ基準）— ✅ 2026-07-27 達成（Playwright 項目のみ方針変更）**:
+- ✅ 4 画面の機能パリティ + ページネーション動作
+- ✅ `next build`（静的エクスポート）が CI で通過し、Firebase Hosting で稼働
+- ✅ 認証フロー（未承認ユーザーの disabled 挙動含む）を実環境で確認
+- ⏭️ ~~Playwright で主要フローの自動テスト~~ → **DoD から除外**。Google が自動化ブラウザの OAuth ポップアップをブロックするため本番に対する E2E は成立せず、Auth Emulator でも `beforeCreate` blocking function をエミュレートできないため最も検証したい導線が再現できない。代替として (a) 静的エクスポート成果物の CI アサーション、(b) Playwright MCP による手動駆動での目視確認、(c) 130 件のユニットテストで担保
+- ✅ jQuery / Bootstrap / compat SDK / FirebaseUI への依存ゼロ
+
+### Phase 1b 実績（2026-07-26〜27）
+
+| PR | 内容 |
+|----|------|
+| #7 (A) | Firestore Rules 強化（不変フィールド保護 + https 限定）+ Rules テスト 7→19 件。設計文書を git 管理下へ |
+| #8 (B) | `web/` scaffold（Next 16.2.11 / React 19.2.3 / **Tailwind 3.4**） |
+| #9 (C) | 型・マッパ・Service + 契約回帰テスト |
+| #10 (D) | 認証層（approved claim の多層防御） |
+| #11 (E) | 一覧 + ページネーション |
+| #12 (F) | 作成・インライン編集・削除 + 頻度 UI（**機能パリティ達成**） |
+| #13 (G) | 履歴画面（`out/detail.html` 生成を実証） |
+| #14 (H) | Hosting 切り替え → **本番稼働開始** |
+| #15 | キャッシュヘッダー修正（デプロイ後検証で発見） |
+| #16 (I) | favicon 追加 + README 再同期 + 本記録 |
+
+テスト総数: 8（Functions）+ 19（Rules）+ 103（Web）= **130 件**
+
+### 技術選定の変更（実施時に判明した事実による）
+
+- **Tailwind 4 → 3.4**: Revolution の 2 アプリが両方 3.4 系だった。v3→v4 は公式移行ツールがあるが逆方向は存在しないため、返済コストが自動化されている側を選択（2026-07-26 BOSS 承認）
+- **Firestore ドキュメントへの Zod 適用 → 書き込み入力のみ**: 読み取りに `parse()` を当てると壊れた doc 1 件で一覧全体が落ちる。読み取りは手書きマッパで防御的に正規化する方針に変更
+
+### Hosting の挙動（実環境でしか判明しなかった 2 件）
+
+**ローカルの `next build` では原理的に検出できない**類の問題が 2 件あり、いずれもプレビューチャネルへのデプロイで発見した。Phase 2 で Revolution 側の CI/CD を組む際も、同様の検証工程を挟むこと。
+
+| # | 事象 | 原因 | 対処 |
+|---|------|------|------|
+| 1 | 拡張子なしパス（`/detail` `/login` `/logout`）が**すべて 404** | Hosting は完全一致でファイルを解決し、拡張子省略時の挙動は非文書化。`.html` 形式は 200 だが `next/link` が指すのは拡張子なし側 | `rewrites` 3 本を追加。exact-match より優先度が低いので `/detail.html` の直接配信は維持される |
+| 2 | HTML の `no-cache` が**実際に踏まれる URL に効いていなかった** | `headers.source` はリクエストパスにマッチし、解決後のファイル名では判定しない。`**/*.@(html)` は `/index.html` には効くが `/` には効かない | 拡張子なしパスを明示列挙 |
+
+系として **`trailingSlash` は `false` 固定が必須**。`true` にすると出力が `out/detail/index.html` になり、Slack 通知に残る過去リンクが一斉に 404 になる。CI でフラットなファイル名をアサートしている。
+
+### 実データで判明したこと
+
+既存の「日常組」は cron が `* * * * *`（毎分）で保存されていた。表示は原文どおりで正しいが、スケジューラが毎時起動のため**実際は 1 時間に 1 回しか動いていない**。プリセット UI が解消する齟齬そのものであり、生の cron 直接入力をやめた判断の裏付けになった。
+
+### 残タスク
+
+| # | タスク | 状態 |
+|---|--------|------|
+| 1b-J | 旧 `public/` 削除 | **ペンディング**。前提は「実運用で差分検知 → Slack 通知 → そのリンクから履歴が開く」が最低 1 回成立すること。2026-07-27 時点で監視対象に差分が発生していないため待機中。それまでロールバック手段（`hosting.public` を `public` へ戻して再デプロイ、約 2 分）として温存する |
+| 1b-K | 「日常組」の cron をプリセットへ変更 | 任意。表示と実態を一致させるだけで動作は変わらない |
 
 ## 7. Phase 2 — Revolution 統合（Revolution リポジトリ）
 
 概要のみ（着手時に Revolution 側で詳細プラン化 + Todoist 起票 + `task-priority-mapping.md` 反映）。
 
 1. 本リポジトリ HEAD のスナップショットを `apps/web-checker/` へ squash import（履歴なし 1 コミット。Revolution は Public リポジトリのため履歴持ち込みは行わない）
-2. package name はそのまま（`@revolution/web-checker-*`）。pnpm workspace には `apps/*` glob で自動包含
-3. ルート `package.json` の `dev`/`build` filter、`turbo.json` の `build.env`（Firebase/Slack 系）への追加
-4. CI（`ci.yml`）へ lint/type-check/build/test を組み込み
-5. `deploy-web-checker.yml` 新設（`deploy-ai-writer.yml` の Workload Identity Federation パターン流用、Firebase Hosting + Functions デプロイ）
-6. **要検証**: pnpm monorepo からの Functions デプロイ（Cloud Build 側の依存解決）。`workspace:*` 依存を持たせない限り素通りする想定だが、`shared/schemas` 参照を入れる場合は isolate 系対策（`firebase-tools` の isolate オプション等）を検証
-7. ルート `.env.local.example` への変数追記（CLAUDE.md ルールにより BOSS 承認必須）
-8. 旧リポジトリ `thanks2music/web_checker` のアーカイブ化
+2. package name はそのまま（`@revolution/web-checker-functions` / `@revolution/web-checker-web`）
+3. **`pnpm-workspace.yaml` に `apps/web-checker/*` を追加**（下記「申し送り 1」参照）
+4. ルート `package.json` の `dev`/`build` filter、`turbo.json` の `build.env`（`NEXT_PUBLIC_FIREBASE_*` 6 種）・`build.outputs`（`out/**`）への追加
+5. CI（`ci.yml`）へ lint/type-check/build/test + 静的エクスポート成果物のアサーションを組み込み
+6. `deploy-web-checker.yml` 新設（`deploy-ai-writer.yml` の Workload Identity Federation パターン流用、Firebase Hosting + Functions デプロイ）
+7. **要検証**: pnpm monorepo からの Functions デプロイ（Cloud Build 側の依存解決）。`workspace:*` 依存を持たせない限り素通りする想定だが、`shared/schemas` 参照を入れる場合は isolate 系対策（`firebase-tools` の isolate オプション等）を検証
+8. ルート `.env.local.example` への変数追記（CLAUDE.md ルールにより BOSS 承認必須）
+9. 旧リポジトリ `thanks2music/web_checker` のアーカイブ化
+
+### Phase 1b の実装で確定した申し送り
+
+1. **`apps/*` glob では拾えない。** 既存の記述「pnpm workspace には `apps/*` glob で自動包含」は**誤り**。web-checker は `functions/` と `web/` の 2 パッケージ構成なので、`apps/web-checker/functions` も `apps/web-checker/web` も `apps/*` にはマッチしない。Revolution ルートの `pnpm-workspace.yaml` に `- 'apps/web-checker/*'` の追加が必要。
+
+2. **firebase-tools はバージョン固定する。** `nodejs24` のデプロイに v15 以降が必須。`^` レンジだと v16 が出た瞬間に挙動が変わりうるので、`~` かピン留めが妥当。
+
+3. **Hosting のデプロイ検証工程を必ず入れる。** Phase 1b で 2 件、ローカルビルドでは原理的に検出できない問題が本番/プレビューで発覚した（拡張子なしパスの 404、ヘッダーのマッチ対象）。Revolution 側の `deploy-web-checker.yml` を作る際も、本番反映前にプレビューチャネルを挟む手順を組み込むこと。
+
+4. **`trailingSlash: false` を変更しない。** Slack 通知に残る `/detail.html?scheduleId=` の互換が壊れる。CI のアサーションがこれを守っている。
+
+5. **`web/eslint.config.mjs` と `jest.config.mjs` のパス調整。** 前者は `import rootConfig from '../../../eslint.config.mjs'`（ai-writer は `../../` だが 1 階層深い）、後者は `moduleNameMapper` の `@revolution/schemas` を `<rootDir>/../../../shared/schemas/$1` へ。
+
+6. **`debug-web-checker` からのデータ移行はしない**方針を維持。同プロジェクトの `createdUser` には UID ではなくメールアドレスが入っており、移行すると Rules の `isOwner()` が恒久 false になる編集不能な doc が生まれる。
 
 **DoD**: Revolution monorepo の CI で web-checker が green、monorepo からのデプロイで従来と同一の監視・通知が稼働。
 

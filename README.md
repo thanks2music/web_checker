@@ -4,7 +4,7 @@
 
 An application that monitors web pages for changes and sends notifications to Slack.
 
-Built on Firebase (Cloud Functions v2 + Firestore + Hosting) and written in TypeScript.
+Built on Firebase (Cloud Functions v2 + Firestore + Hosting), with a Next.js admin UI, written in TypeScript throughout.
 
 ## How It Works
 
@@ -14,7 +14,7 @@ Built on Firebase (Cloud Functions v2 + Firestore + Hosting) and written in Type
 4. The extracted content is compared with the previous snapshot (stored in Firestore). If it changed, a diff is posted to Slack via an Incoming Webhook.
 5. Creating or editing a schedule (`uri` / `selector`) triggers an immediate check (`webCrawlerOnWrite`).
 
-Because the scheduler itself ticks hourly, a per-schedule interval shorter than one hour has no effect.
+Because the scheduler itself ticks hourly, **a per-schedule interval shorter than one hour has no effect** — a schedule set to `*/10 * * * *` still runs once an hour. The admin UI presents presets rather than free-form cron for this reason.
 
 ### Cloud Functions
 
@@ -32,26 +32,36 @@ All functions are 2nd gen and run on the **Node.js 24** runtime.
 
 > **Note on the runtime**: `nodejs24` is available for **2nd gen functions only**, and requires **firebase-tools v15 or later** — v14 rejects it as an invalid runtime at deploy time.
 
-## Requirements
-
-- **Node.js 24** (see `.tool-versions`; the Cloud Functions runtime is pinned to `nodejs24`)
-- **pnpm 10** (this repository is a pnpm workspace)
-- **firebase-tools v15 or later** (v14 cannot deploy the `nodejs24` runtime)
-- A Google account
-- A Slack workspace (to issue an Incoming Webhook URL)
-- Java 21 or later, if you want to run the Firestore Rules tests locally (required by the emulator)
-
 ## Repository layout
+
+A pnpm workspace with two packages.
 
 ```
 .
 ├── firebase.json          # Firestore / Hosting / Functions config
 ├── .firebaserc            # project aliases (default, debug)
-├── firestore.rules        # security rules
-├── pnpm-workspace.yaml    # workspace root (scopes to functions/)
+├── firestore.rules        # security rules — the actual access boundary
+├── pnpm-workspace.yaml
 ├── functions/             # @revolution/web-checker-functions (Cloud Functions)
-└── public/                # static admin UI served by Firebase Hosting
+└── web/                   # @revolution/web-checker-web (Next.js admin UI)
+    ├── app/               # App Router; (protected) requires an approved account
+    ├── components/
+    ├── lib/               # firebase client, auth, services, schemas
+    └── __tests__/
 ```
+
+The UI is a **static export** (`output: 'export'`) served by Firebase Hosting. That means there is no middleware and no API routes, and it has a direct consequence worth stating plainly:
+
+> **`firestore.rules` is the only real security boundary.** The auth guard, the pending-approval screen and the redirects are all client-side and bypassable from DevTools. What protects the data is the rules requiring an `approved` custom claim, and ownership checks on write. Switching to a server-rendered deployment would not change this — the browser can always talk to Firestore directly.
+
+## Requirements
+
+- **Node.js 24** (see `.tool-versions`; the Cloud Functions runtime is pinned to `nodejs24`)
+- **pnpm 10**
+- **firebase-tools v15 or later** (v14 cannot deploy the `nodejs24` runtime). A copy is pinned in the workspace — prefer invoking it through pnpm over a global install.
+- A Google account
+- A Slack workspace (to issue an Incoming Webhook URL)
+- Java 21 or later, to run the Firestore Rules tests locally (required by the emulator)
 
 ## Deployment
 
@@ -69,97 +79,69 @@ Run all following steps from the repository root unless noted otherwise.
 
 1. Open the [Firebase console](https://console.firebase.google.com/)
 2. Click "Add project"
-3. Enter a project name (e.g. `web-checker-prod`)
+3. Enter a project name
 4. Skip Google Analytics
 5. Click "Create project"
 
-#### Upgrade the billing plan
-
-Cloud Functions requires the Blaze (pay-as-you-go) plan.
-
-1. Click "Upgrade" (Spark) at the bottom left of the Firebase console
-2. Select "Blaze (pay as you go)"
-3. Set up a billing account (create one in Google Cloud if you don't have one)
+Cloud Functions requires the **Blaze (pay-as-you-go)** plan. Upgrade from the bottom left of the console and attach a billing account.
 
 > A single billing account can be linked to five projects by default. If you hit that quota, either unlink an unused project or request an increase.
 
-### 3. Authenticate the Firebase CLI
+### 3. Authenticate and link the project
 
 ```shell
 pnpm --filter @revolution/web-checker-functions exec firebase login
-```
-
-The pinned firebase-tools lives in the workspace, so prefer invoking it through pnpm rather than a globally installed `firebase` (a global v14 will fail on the `nodejs24` runtime).
-
-### 4. Link the project to this working directory
-
-```shell
 pnpm --filter @revolution/web-checker-functions exec firebase use --add
 ```
 
-- Select the Firebase project you created
-- Enter an alias (e.g. `production`)
+Select the project and enter an alias. Confirm that `.firebaserc` lists it.
 
-Confirm that `.firebaserc` lists the alias.
-
-### 5. Upgrade Authentication to Identity Platform
+### 4. Upgrade Authentication to Identity Platform
 
 The `beforeCreate` blocking function **requires Identity Platform**. Without it, deployment of the Auth binding fails with `Blocking Functions may only be configured for GCIP projects`.
 
-1. Firebase console → Authentication → Settings → **Blocking functions**
-2. Follow the "Upgrade to Identity Platform" prompt and confirm
+Firebase console → Authentication → Settings → **Blocking functions**, then follow the upgrade prompt. Identity Platform includes a free tier of 50,000 MAU on the Blaze plan. **The upgrade cannot be reverted.**
 
-Identity Platform includes a free tier of 50,000 MAU on the Blaze plan. **The upgrade cannot be reverted.**
+### 5. Enable Google sign-in
 
-### 6. Enable Google sign-in
+Firebase console → Authentication → "Sign-in method" → Google → enable, set the support email, save.
 
-1. Firebase console → "Authentication"
-2. Click "Get started"
-3. "Sign-in method" tab → "Google"
-4. Toggle "Enable"
-5. Set the project support email
-6. Click "Save"
+### 6. Create the Firestore database
 
-### 7. Create the Firestore database
+Firebase console → Firestore Database → "Create database" → production mode → location `us-central1` (matches the Functions region and stays within the free tier).
 
-1. Firebase console → "Firestore Database"
-2. Click "Create database"
-3. Select "Start in production mode"
-4. Choose a location (recommended: `us-central1`, which matches the Functions region and stays within the free tier)
-5. Click "Enable"
+### 7. Register a Web app and configure the UI
+
+The admin UI reads its Firebase config from environment variables rather than Hosting's `/__/firebase/init.js`, so the project needs a registered Web app:
+
+```shell
+pnpm --filter @revolution/web-checker-functions exec firebase apps:create WEB "Web Checker Admin"
+pnpm --filter @revolution/web-checker-functions exec firebase apps:sdkconfig WEB <APP_ID>
+```
+
+Copy the values into `web/.env.local` (git-ignored) using `web/.env.example` as the template. All six keys are required; the build fails if any is missing.
+
+> These values are embedded in the JavaScript bundle at build time. That is expected — a Firebase `apiKey` is a project identifier, not a credential. Access control lives in `firestore.rules`.
 
 ### 8. Register the Slack webhook in Secret Manager
 
-#### 8.1 Get a Slack Webhook URL
-
-1. Open the [Slack API](https://api.slack.com/apps) page
-2. "Create New App" → "From scratch"
-3. Enter an app name (e.g. `Web Checker`) and select your workspace
-4. Open "Incoming Webhooks" in the left menu
-5. Turn on "Activate Incoming Webhooks"
-6. Click "Add New Webhook to Workspace" at the bottom of the page
-7. Select the notification channel and click "Allow"
-8. Copy the generated Webhook URL
-
-#### 8.2 Store it in Cloud Secret Manager
-
-The webhook URL is a secret and is **not** kept in a `.env` file. `slackNotifier` declares it via `defineSecret` and Firebase mounts it at runtime.
+Create an Incoming Webhook at [api.slack.com/apps](https://api.slack.com/apps) (Create New App → From scratch → Incoming Webhooks → Add New Webhook to Workspace), then:
 
 ```shell
 pnpm --filter @revolution/web-checker-functions exec \
   firebase functions:secrets:set SLACK_URL_REVOLUTION_WEB_CHECKER
 ```
 
-Paste the URL at the prompt. Nothing is written to your shell history. The CLI enables the Secret Manager API on first use and grants the runtime service account read access during the next deploy.
+Paste the URL at the prompt — nothing is written to your shell history. The CLI enables the Secret Manager API on first use and grants the runtime service account read access during the next deploy.
 
-To rotate the value later, run the same command again — it creates a new version — then **redeploy `slackNotifier`**, because functions are pinned to the secret version they were deployed with:
+To rotate the value later, run the same command again (it creates a new version) and then **redeploy `slackNotifier`**, because functions are pinned to the secret version they were deployed with:
 
 ```shell
 pnpm --filter @revolution/web-checker-functions exec \
   firebase deploy --only functions:slackNotifier
 ```
 
-> **Do not create `functions/.env` with `SLACK_URL` or `HOSTING_URL`.** The Firebase CLI uploads every entry in that file as a plaintext environment variable on the deployed functions. Neither variable is read by the code any more: the webhook comes from Secret Manager, and the hosting URL is derived from `GCLOUD_PROJECT`. `.env.example` documents the only key you may need for local work.
+> **Do not create `functions/.env` with `SLACK_URL` or `HOSTING_URL`.** The Firebase CLI uploads every entry in that file as a plaintext environment variable on the deployed functions. Neither variable is read by the code any more: the webhook comes from Secret Manager, and the hosting URL is derived from `GCLOUD_PROJECT`.
 
 ### 9. Deploy
 
@@ -167,16 +149,25 @@ pnpm --filter @revolution/web-checker-functions exec \
 pnpm --filter @revolution/web-checker-functions exec firebase deploy
 ```
 
-`firebase.json` runs the TypeScript build as a predeploy step, so no manual build is needed.
+`firebase.json` builds both packages as predeploy steps, so no manual build is needed.
+
+For a UI change, previewing before going live is worth the extra step:
+
+```shell
+pnpm --filter @revolution/web-checker-functions exec \
+  firebase hosting:channel:deploy preview --expires 7d
+```
+
+A preview channel serves the new build against the **same Firestore and Auth** while production keeps serving the current one.
 
 ### 10. Bind the blocking function
 
-After the first successful deploy, the function must be wired into the auth flow:
+After the first successful deploy:
 
 1. Firebase console → Authentication → Settings → **Blocking functions**
 2. Set **Before account creation (`beforeCreate`)** to `beforeCreate(us-central1)`
-3. Leave "Before sign-in" as None, and leave all "provider token credentials" checkboxes unchecked
-4. Click "Save"
+3. Leave "Before sign-in" as None and all provider-token checkboxes unchecked
+4. Save
 
 Until this is saved, new users are created **enabled**, bypassing the approval flow.
 
@@ -184,7 +175,7 @@ Until this is saved, new users are created **enabled**, bypassing the approval f
 
 New users are created disabled and cannot sign in until an administrator approves them. Approval sets both `disabled: false` and the `approved: true` custom claim, which `firestore.rules` requires.
 
-1. Open the Hosting URL (`https://<project-id>.web.app`) and sign in with Google. The attempt is rejected — this is expected — and a Slack notification containing the new UID is sent.
+1. Open the Hosting URL and sign in with Google. The attempt is rejected — this is expected — and a Slack notification containing the new UID is sent.
 2. Grant approval using that UID:
 
 ```shell
@@ -194,31 +185,40 @@ pnpm run build
 GOOGLE_CLOUD_PROJECT=<project-id> node dist/scripts/setAdmin.js <UID>
 ```
 
-3. Sign out and sign in again. The schedule list should now load.
+3. Back in the app, use "承認状態を再確認" on the waiting screen, or sign out and in again.
+
+> A custom claim does not reach an already-issued ID token; it arrives on the next refresh, up to an hour later. The waiting screen has a button that forces the refresh, which is the quickest way through.
 
 ## Usage
 
 ### Registering a schedule
 
-1. After signing in, fill in the following on the schedule list screen:
-   - **Schedule**: crontab format (e.g. `0 * * * *` = hourly, the default). Intervals shorter than one hour have no effect.
-   - **Title**: any name
-   - **URL**: the page to monitor
-   - **Selector**: a CSS selector (e.g. `#content`, `.main-text`)
-   - **Channel**: a Slack channel name (optional; overrides the webhook default)
-2. Click "Add"
+Sign in, then "スケジュールを追加":
+
+- **タイトル** — any name
+- **監視する URL** — must be `https://`
+- **CSS セレクタ** — the element to watch (e.g. `#content`, `.main-text`)
+- **Slack 通知先** — a channel name, or empty for the webhook default
+- **実行頻度** — a preset, or a custom cron expression. The form shows when the next check will actually run.
 
 The first crawl runs immediately and posts a "newly added" notification. Subsequent runs only notify when the selected content changes.
+
+Editing the URL or selector also triggers an immediate re-crawl; the form says so before you save.
+
+You can only edit or delete schedules you created — the rules enforce ownership, and the UI hides the controls accordingly.
 
 ## Development
 
 ```shell
 pnpm install       # install workspace dependencies
-pnpm lint          # ESLint (flat config, type-aware rules)
-pnpm type-check    # tsc --noEmit
-pnpm test          # Jest unit tests (network calls are mocked with nock)
-pnpm build         # tsc
+pnpm lint          # ESLint across both packages
+pnpm type-check
+pnpm test          # Jest (both packages)
+pnpm build
+pnpm dev:web       # Next.js dev server on http://localhost:6060
 ```
+
+> Port 6060, not 6666 — browsers reserve 6666 for ircu and Next.js refuses to bind it.
 
 ### Firestore Rules tests
 
@@ -228,15 +228,25 @@ These run against the Firestore emulator and need a JDK on your PATH:
 pnpm --filter @revolution/web-checker-functions test:rules
 ```
 
-### Watching logs
+### Viewing Functions logs
 
 ```shell
 pnpm --filter @revolution/web-checker-functions exec firebase functions:log
 ```
 
+## Hosting behaviour worth knowing
+
+Two things about Firebase Hosting are not obvious from a local build, and both were found only by deploying to a preview channel.
+
+**Extensionless paths do not resolve on their own.** The static export writes `out/detail.html`, and Hosting serves that for `/detail.html` — which is what keeps the links in older Slack notifications working. But `/detail` returns 404 unless a rewrite says otherwise, and `next/link` points at `/detail`. `firebase.json` declares a rewrite for each route for this reason.
+
+**Header rules match the request path, not the resolved file.** A rule on `**/*.@(html)` applies to `/index.html` and not to `/`. The clean paths are therefore listed explicitly so that HTML is served `no-cache`; without it, a browser can hold a stale document pointing at content-hashed chunks that a deploy has already removed.
+
+A corollary: `trailingSlash` must stay `false` in `web/next.config.ts`. Setting it to `true` changes the output to `out/detail/index.html`, which would break every historical Slack link at once. CI asserts the flat filenames for exactly this reason.
+
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push and pull request against `main`: lint, type-check, unit tests, Firestore Rules tests (emulator with JDK 21), and build. The Node version is read from `.tool-versions` so CI and local development cannot drift apart.
+`.github/workflows/ci.yml` runs on every push and pull request against `main`: lint, type-check, unit tests, Firestore Rules tests (emulator with JDK 21), build, and an assertion that the static export still emits the expected flat HTML files. The Node version is read from `.tool-versions` so CI and local development cannot drift apart.
 
 ## License
 
