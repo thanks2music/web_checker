@@ -42,10 +42,13 @@ const getHostingUrl = (): string => {
 };
 
 // スケジュール定期実行（毎時 5 分に起動）
+// NOTE: 全関数が同一バンドル（index.ts）を共有するため、この関数自身が
+// 使わない cheerio / axios 等も起動時にロードされる。firebase-admin v14 と
+// 合わせると 128MiB では起動前に OOM するため 256MiB を確保する。
 export const webFetcher = onSchedule({
   schedule: '5 * * * *',
   timeoutSeconds: 300,
-  memory: '128MiB',
+  memory: '256MiB',
   region: REGION,
 }, async () => {
   await webFetcherLib(firestore, pubsub);
@@ -83,10 +86,12 @@ export const webCrawlerOnWrite = onDocumentWritten({
 });
 
 // slackNotifier トピックを購読
+// NOTE: webFetcher と同じ理由で 256MiB。128MiB では起動時 TCP probe の前に
+// OOM し、Pub/Sub のリトライがすべて配信失敗していた。
 export const slackNotifier = onMessagePublished<SlackPayload>({
   topic: 'slackNotifier',
   timeoutSeconds: 300,
-  memory: '128MiB',
+  memory: '256MiB',
   region: REGION,
   secrets: [slackUrl],
 }, async (event) => {
