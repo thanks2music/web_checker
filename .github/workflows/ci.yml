@@ -50,5 +50,33 @@ jobs:
       - name: Firestore Rules tests (via emulator)
         run: pnpm --filter @revolution/web-checker-functions test:rules
 
+      # Firebase の公開設定はビルド時にバンドルへ焼き込まれるため、値が無いと
+      # `next build` が env 検証で落ちる。SKIP_ENV_VALIDATION ではなくダミー値を渡すのは、
+      # skip すると lib/env.ts の runtimeEnv の書き漏れ（t3-env で最も多い事故）が
+      # CI で一度も検出されなくなるため。ここは検証経路を通すことに意味がある。
       - name: Build
         run: pnpm build
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: dummy-api-key
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: dummy.firebaseapp.com
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: dummy-project
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: dummy.firebasestorage.app
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+          NEXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+
+      # 静的エクスポートが拡張子付きの .html を出し続けていることを保証する。
+      #
+      # Slack 通知に埋め込まれた過去リンクは /detail.html?scheduleId=... の形で、
+      # Firebase Hosting は out/detail.html を exact-match で配信することで
+      # これを生かしている。next.config.ts の trailingSlash を true にすると
+      # 出力が out/detail/index.html に変わり、過去リンクが一斉に 404 になる。
+      # 気付ける場所がここしかないので CI で固定する。
+      - name: Assert static export artifacts (legacy URL compatibility)
+        run: |
+          for f in index.html 404.html; do
+            test -f "web/out/$f" || {
+              echo "::error::web/out/$f is missing — check next.config.ts trailingSlash"
+              exit 1
+            }
+          done
+          echo "static export artifacts OK"

@@ -62,6 +62,10 @@ typings/
 
 # next.js build output
 .next
+# `next build` with output: 'export' writes here; Firebase Hosting serves it.
+out
+# incremental build cache from tsc
+*.tsbuildinfo
 
 # docs/ is ignored by default because it also holds a vendored copy of the
 # Firebase documentation (docs/firebase/), which is large and not ours to track.

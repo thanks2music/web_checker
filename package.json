@@ -4,15 +4,16 @@
   "private": true,
   "description": "Web page change monitoring app with Slack notifications (Firebase Cloud Functions + Firestore + Hosting)",
   "scripts": {
-    "build": "pnpm --filter @revolution/web-checker-functions build",
-    "lint": "pnpm --filter @revolution/web-checker-functions lint",
-    "type-check": "pnpm --filter @revolution/web-checker-functions type-check",
-    "test": "pnpm --filter @revolution/web-checker-functions test",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "type-check": "pnpm -r run type-check",
+    "test": "pnpm -r run test",
+    "dev:web": "pnpm --filter @revolution/web-checker-web run dev",
     "deploy": "firebase deploy"
   },
   "packageManager": "pnpm@10.11.0",
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=24.0.0",
     "pnpm": ">=10.0.0"
   }
 }
